@@ -11,3 +11,5 @@ celery[redis]
 redis
 boto3
 psycopg2-binary
+ultralytics
+opencv-python-headless

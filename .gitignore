@@ -17,6 +17,9 @@ backend/__pycache__/
 backend/**/*.py[cod]
 backend/**/*.pyo
 
+# YOLOv8 model weights
+*.pt
+
 # Distribution / packaging
 backend/dist/
 backend/build/
