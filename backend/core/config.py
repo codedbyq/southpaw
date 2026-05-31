@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     # Clerk
     CLERK_SECRET_KEY: str
     CLERK_AUTHORIZED_PARTIES: str = "http://localhost:5173"
+    CLERK_FRONTEND_API: str
 
     # Database
     DATABASE_URL: str
