@@ -14,6 +14,8 @@ from models.job import Job
 from models.clip import Clip
 from models.strike import Strike
 from core.config import settings
+import redis as redis_lib
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,9 @@ s3 = boto3.client(
     aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
     region_name=settings.AWS_REGION,
 )
+
+# Redis pub/sub client for real-time updates on upload progress
+redis_client = redis_lib.from_url(settings.REDIS_URL)
 
 # How many consecutive frames we look back to calculate velocity
 VELOCITY_WINDOW = 5
@@ -91,6 +96,7 @@ def process_clip(self, clip_id: str, job_id: str):
             job.progress = 100
             job.result_s3_key = result_s3_key
             db.commit()
+            _publish_progress(job_id, "complete", 100, result_url=result_s3_key)
 
             logger.info(f"Job {job_id} complete — {len(strikes_data)} strikes detected")
 
@@ -190,6 +196,7 @@ def _process_video(tmp_path: str, job_id: str, job, db) -> tuple:
             progress = min(int((frame_index / total_frames) * 95), 95)
             job.progress = progress
             db.commit()
+            _publish_progress(job_id, "processing", progress)
             logger.info(f"Job {job_id} progress: {progress}%")
 
         frame_index += 1
@@ -251,3 +258,11 @@ def _write_results_to_s3(s3_key: str, data: dict):
         Body=json.dumps(data),
         ContentType="application/json",
     )
+
+def _publish_progress(job_id: str, status: str, progress: int, result_url: str = None):
+    """Publish a progress event to the Redis pub/sub channel for this job."""
+    import json
+    payload = {"status": status, "progress": progress}
+    if result_url:
+        payload["result_url"] = result_url
+    redis_client.publish(f"job:{job_id}", json.dumps(payload))
