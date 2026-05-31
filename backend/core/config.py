@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     S3_BUCKET_NAME: str
 
     # Redis
-    REDIS_URL: str = "redis://redis:6379"
+    REDIS_URL: str = "redis://localhost:6379/0"  # /0 is the Redis database index
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

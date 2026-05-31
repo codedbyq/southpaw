@@ -5,8 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from core.s3 import generate_presigned_upload_url
-from db.session import get_db
 from dependencies import get_current_user
+from worker.tasks import process_clip
+from db.session import get_db
 from models.clip import Clip
 from models.job import Job
 
@@ -129,8 +130,7 @@ async def upload_complete(
     await db.commit()
     await db.refresh(job)
 
-    # TODO: enqueue Celery task
-    # process_clip.delay(str(clip.id), str(job.id))
+    process_clip.delay(str(clip.id), str(job.id))
 
     return UploadCompleteResponse(
         clip_id=str(clip.id),

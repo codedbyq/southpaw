@@ -10,3 +10,4 @@ boto3
 celery[redis]
 redis
 boto3
+psycopg2-binary
