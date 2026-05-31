@@ -1,14 +1,29 @@
 import { useState } from 'react'
+import { SignInButton, SignUpButton, UserButton, useAuth } from '@clerk/react'
 import reactLogo from './assets/react.svg'
 import viteLogo from './assets/vite.svg'
 import heroImg from './assets/hero.png'
 import './App.css'
+
+function AuthControls() {
+  const { isSignedIn, isLoaded } = useAuth()
+  if (!isLoaded) return null
+  return isSignedIn
+    ? <UserButton />
+    : <>
+        <SignInButton mode="modal"><button>Sign in</button></SignInButton>
+        <SignUpButton mode="modal"><button>Sign up</button></SignUpButton>
+      </>
+}
 
 function App() {
   const [count, setCount] = useState(0)
 
   return (
     <>
+      <nav style={{ display: 'flex', justifyContent: 'flex-end', padding: '1rem 2rem', gap: '0.75rem' }}>
+        <AuthControls />
+      </nav>
       <section id="center">
         <div className="hero">
           <img src={heroImg} className="base" width="170" height="179" alt="" />
