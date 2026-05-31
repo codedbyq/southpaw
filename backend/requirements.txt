@@ -5,4 +5,8 @@ asyncpg
 pydantic-settings
 python-dotenv
 httpx
-python-jose[cryptography]
+clerk-backend-api
+boto3
+celery[redis]
+redis
+boto3
