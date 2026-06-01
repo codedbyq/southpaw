@@ -3,6 +3,7 @@ import { useAuth } from '@clerk/react'
 import HomePage from './pages/HomePage'
 import DashboardPage from './pages/DashboardPage'
 import PlayerPage from './pages/PlayerPage'
+import SessionPage from './pages/SessionPage'
 
 function ProtectedRoute({ children }) {
   const { isSignedIn, isLoaded } = useAuth()
@@ -28,6 +29,14 @@ function App() {
         element={
           <ProtectedRoute>
             <PlayerPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/sessions/:sessionId"
+        element={
+          <ProtectedRoute>
+            <SessionPage />
           </ProtectedRoute>
         }
       />

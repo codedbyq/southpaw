@@ -13,5 +13,7 @@ class Strike(Base):
     timestamp_seconds: Mapped[float] = mapped_column(Float, nullable=False)
     frame_index: Mapped[int] = mapped_column(Integer, nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    arm_extension: Mapped[float | None] = mapped_column(Float, nullable=True)
+    guard_dropped: Mapped[bool | None] = mapped_column(nullable=True)
 
     job: Mapped["Job"] = relationship("Job", back_populates="strikes")

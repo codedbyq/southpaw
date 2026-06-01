@@ -22,6 +22,8 @@ class UploadInitRequest(BaseModel):
     filename: str
     content_type: str
     duration_seconds: int | None = None
+    sport: str = "boxing"
+    session_id: str | None = None
 
 
 class UploadInitResponse(BaseModel):
@@ -75,6 +77,8 @@ async def upload_init(
         filename=body.filename,
         duration_seconds=body.duration_seconds,
         status="pending",
+        sport=body.sport,
+        session_id=uuid.UUID(body.session_id) if body.session_id else None,
     )
     db.add(clip)
     await db.commit()

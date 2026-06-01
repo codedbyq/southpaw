@@ -28,7 +28,7 @@ const STRIKE_COLORS = {
 
 const DEFAULT_SKELETON_COLOR = '#22d3ee'   // cyan
 const MUTED_SKELETON_COLOR   = '#374151'   // gray — for non-selected subjects
-const JOINT_RADIUS = 4
+const JOINT_RADIUS = 2
 const VISIBILITY_THRESHOLD = 0.3
 
 /**
