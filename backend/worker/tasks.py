@@ -15,6 +15,7 @@ from models.clip import Clip
 from models.strike import Strike
 from core.config import settings
 import redis as redis_lib
+import subprocess
 
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ redis_client = redis_lib.from_url(settings.REDIS_URL)
 VELOCITY_WINDOW = 5
 
 # Minimum wrist/ankle velocity (normalized 0-1 units per frame) to count as a strike
-STRIKE_VELOCITY_THRESHOLD = 0.02
+STRIKE_VELOCITY_THRESHOLD = 0.08
 
 # Minimum frames between detected strikes to avoid double-counting
 STRIKE_COOLDOWN_FRAMES = 15
@@ -121,11 +122,45 @@ def _download_clip(s3_key: str) -> str:
     tmp.close()
     return tmp.name
 
+def _get_video_rotation(filepath: str) -> int:
+    """Read EXIF rotation from video metadata using ffprobe."""
+    try:
+        result = subprocess.run([
+            'ffprobe', '-v', 'quiet',
+            '-print_format', 'json',
+            '-show_streams',
+            filepath
+        ], capture_output=True, text=True)
+        data = json.loads(result.stdout)
+        for stream in data.get('streams', []):
+            tags = stream.get('tags', {})
+            rotation = tags.get('rotate') or tags.get('rotation')
+            if rotation:
+                return int(rotation)
+    except Exception as e:
+        logger.warning(f"Could not read video rotation: {e}")
+    return 0
+
+
+def _apply_rotation(frame, rotation: int):
+    """Rotate frame to match EXIF orientation so keypoints align with browser rendering."""
+    if rotation == 90:
+        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    elif rotation == 180:
+        return cv2.rotate(frame, cv2.ROTATE_180)
+    elif rotation == 270:
+        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return frame
 
 def _process_video(tmp_path: str, job_id: str, job, db) -> tuple:
     cap = cv2.VideoCapture(tmp_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
+
+    # Detect EXIF rotation once before processing
+    rotation = _get_video_rotation(tmp_path)
+    if rotation:
+        logger.info(f"Detected video rotation: {rotation}°")
 
     frames_data = []
     strikes_data = []
@@ -137,6 +172,9 @@ def _process_video(tmp_path: str, job_id: str, job, db) -> tuple:
         ret, frame = cap.read()
         if not ret:
             break
+
+        if rotation:
+            frame = _apply_rotation(frame, rotation)
 
         # Run YOLOv8 pose on the frame
         results = model(frame, verbose=False)
