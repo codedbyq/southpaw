@@ -30,3 +30,14 @@ def generate_presigned_upload_url(s3_key: str, content_type: str, expiration: in
         print(f"Error generating presigned URL: {e}")
         return None
     return response
+
+def generate_presigned_download_url(s3_key: str, expires_in: int = 3600) -> str:
+    """Generate a presigned URL for reading a file from S3."""
+    return s3_client.generate_presigned_url(
+        "get_object",
+        Params={
+            "Bucket": settings.S3_BUCKET_NAME,
+            "Key": s3_key,
+        },
+        ExpiresIn=expires_in,
+    )

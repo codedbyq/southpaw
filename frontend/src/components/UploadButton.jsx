@@ -4,7 +4,7 @@ import { useApi } from '../api/client'
 
 const ACCEPTED_TYPES = ['video/mp4', 'video/quicktime', 'video/x-msvideo']
 
-export default function UploadButton() {
+export default function UploadButton({ onUploadComplete }) {
   const { getToken } = useAuth()
   const api = useApi()
   const fileInputRef = useRef(null)
@@ -54,7 +54,9 @@ export default function UploadButton() {
           setState('error')
         }
       })
-
+      
+      if (onUploadComplete) onUploadComplete()
+    
     } catch (err) {
       console.error(err)
       setError(err.message)
