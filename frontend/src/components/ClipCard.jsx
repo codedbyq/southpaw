@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useApi } from '../api/client'
+import { useNavigate } from 'react-router-dom'
 
 const STATUS_STYLES = {
   queued:     'bg-gray-800 text-gray-400',
@@ -21,6 +22,7 @@ const STATUS_LABELS = {
 
 export default function ClipCard({ clip, onDelete }) {
   const api = useApi()
+  const navigate = useNavigate()
   const [deleting, setDeleting] = useState(false)
 
   const jobStatus = clip.job?.status || clip.status
@@ -70,7 +72,7 @@ export default function ClipCard({ clip, onDelete }) {
         {/* View button — only when processing is complete */}
         {isReady && (
           <button
-            onClick={() => console.log('TODO: open player', clip.id)}
+            onClick={() => navigate(`/clips/${clip.id}`)}
             className="text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
           >
             View

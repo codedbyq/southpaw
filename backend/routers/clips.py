@@ -32,11 +32,11 @@ class ClipResponse(BaseModel):
     status: str
     created_at: datetime
     job: JobSummary | None
-    result_url: str | None  # presigned S3 URL for the keypoint JSON
+    result_url: str | None      # presigned URL for keypoint JSON
+    video_url: str | None       # presigned URL for raw video
 
     class Config:
         from_attributes = True
-
 
 # --- Routes ---
 
@@ -128,6 +128,8 @@ async def _build_clip_response(clip: Clip, db: AsyncSession) -> ClipResponse:
     job = job_result.scalar_one_or_none()
 
     result_url = None
+    video_url = generate_presigned_download_url(clip.s3_key)
+
     if job and job.result_s3_key:
         result_url = generate_presigned_download_url(job.result_s3_key)
 
@@ -143,4 +145,5 @@ async def _build_clip_response(clip: Clip, db: AsyncSession) -> ClipResponse:
             progress=job.progress,
         ) if job else None,
         result_url=result_url,
+        video_url=video_url,
     )
