@@ -23,6 +23,9 @@ export function useApi() {
       throw new Error(error.detail || 'Request failed')
     }
 
+    // 204 No Content has no body — don't try to parse JSON
+    if (res.status === 204) return null
+
     return res.json()
   }
 
