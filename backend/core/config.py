@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"  # /0 is the Redis database index
 
+    # LLM
+    DEEPSEEK_API_KEY: str
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

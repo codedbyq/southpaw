@@ -13,4 +13,5 @@ boto3
 psycopg2-binary
 ultralytics
 opencv-python-headless
-pyjwt[crypto] 
+pyjwt[crypto]
+openai

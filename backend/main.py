@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import clips, jobs, strikes, uploads
+from routers import clips, jobs, sessions, strikes, uploads
 
 app = FastAPI(title="Southpaw API", version="0.1.0")
 
@@ -18,6 +18,7 @@ app.add_middleware(
 
 app.include_router(uploads.router)
 app.include_router(clips.router)
+app.include_router(sessions.router)
 app.include_router(jobs.router)
 app.include_router(strikes.router)
 
