@@ -9,7 +9,9 @@ from dependencies import get_current_user
 from db.session import get_db
 from models.clip import Clip
 from models.job import Job
+from models.strike import Strike
 from core.s3 import generate_presigned_download_url
+from services.feedback import build_clip_summary, generate_feedback
 
 router = APIRouter(prefix="/clips", tags=["clips"])
 
@@ -30,6 +32,8 @@ class ClipResponse(BaseModel):
     filename: str
     duration_seconds: int | None
     status: str
+    sport: str
+    session_id: str | None
     created_at: datetime
     job: JobSummary | None
     result_url: str | None      # presigned URL for keypoint JSON
@@ -65,6 +69,35 @@ async def get_clip(
     """Return a single clip with job status and result URL if processed."""
     clip = await _get_clip_for_user(clip_id, clerk_user_id, db)
     return await _build_clip_response(clip, db)
+
+
+@router.get("/{clip_id}/feedback")
+async def get_clip_feedback(
+    clip_id: uuid.UUID,
+    clerk_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate LLM coaching feedback for a single clip."""
+    clip = await _get_clip_for_user(clip_id, clerk_user_id, db)
+
+    job_result = await db.execute(select(Job).where(Job.clip_id == clip.id))
+    job = job_result.scalar_one_or_none()
+
+    if not job or job.status != "complete":
+        raise HTTPException(status_code=400, detail="Clip has not been processed yet")
+
+    strikes_result = await db.execute(select(Strike).where(Strike.job_id == job.id))
+    strikes = strikes_result.scalars().all()
+
+    if not strikes:
+        raise HTTPException(status_code=400, detail="No strikes detected in this clip")
+
+    try:
+        summary = build_clip_summary(clip, strikes)
+        feedback = await generate_feedback(summary)
+        return {"feedback": feedback}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"LLM call failed: {exc}")
 
 
 @router.delete("/{clip_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -138,6 +171,8 @@ async def _build_clip_response(clip: Clip, db: AsyncSession) -> ClipResponse:
         filename=clip.filename,
         duration_seconds=clip.duration_seconds,
         status=clip.status,
+        sport=clip.sport,
+        session_id=str(clip.session_id) if clip.session_id else None,
         created_at=clip.created_at,
         job=JobSummary(
             id=str(job.id),

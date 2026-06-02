@@ -34,6 +34,7 @@ export default function UploadButton({ onUploadComplete }) {
   const [sessionValue, setSessionValue] = useState('')   // '' = skip, uuid = existing, 'new' = create inline
   const [newLabel, setNewLabel] = useState('')
   const [newSessionType, setNewSessionType] = useState('sparring')
+  const [durationSeconds, setDurationSeconds] = useState(null)
 
   async function handleFileChange(e) {
     const picked = e.target.files?.[0]
@@ -48,12 +49,14 @@ export default function UploadButton({ onUploadComplete }) {
     setError(null)
     setState('selecting')
 
-    try {
-      const data = await api.get('/sessions')
-      setSessions(data)
-    } catch {
-      setSessions([])
-    }
+    // Extract duration and fetch sessions in parallel — both non-fatal if they fail
+    const [duration, sessionsData] = await Promise.allSettled([
+      getVideoDuration(picked),
+      api.get('/sessions'),
+    ])
+
+    setDurationSeconds(duration.status === 'fulfilled' ? duration.value : null)
+    setSessions(sessionsData.status === 'fulfilled' ? sessionsData.value : [])
   }
 
   async function handleStartUpload() {
@@ -77,6 +80,7 @@ export default function UploadButton({ onUploadComplete }) {
         content_type: file.type,
         sport,
         session_id,
+        duration_seconds: durationSeconds,
       })
 
       await uploadToS3(file, upload_url, (pct) => setProgress(pct))
@@ -122,6 +126,7 @@ export default function UploadButton({ onUploadComplete }) {
     setSessionValue('')
     setNewLabel('')
     setNewSessionType('sparring')
+    setDurationSeconds(null)
   }
 
   // Only show sessions matching the selected sport
@@ -258,6 +263,20 @@ export default function UploadButton({ onUploadComplete }) {
       )}
     </div>
   )
+}
+
+
+function getVideoDuration(file) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(video.src)
+      resolve(isFinite(video.duration) ? Math.round(video.duration) : null)
+    }
+    video.onerror = () => reject(new Error('Could not read video duration'))
+    video.src = URL.createObjectURL(file)
+  })
 }
 
 

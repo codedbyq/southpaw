@@ -44,6 +44,9 @@ STRIKE_VELOCITY_THRESHOLD = 0.08
 # Minimum frames between detected strikes to avoid double-counting
 STRIKE_COOLDOWN_FRAMES = 15
 
+# Minimum keypoint confidence to trust a measurement for metrics
+MIN_KEYPOINT_CONF = 0.3
+
 
 @celery_app.task(bind=True, max_retries=3)
 def process_clip(self, clip_id: str, job_id: str):
@@ -88,6 +91,8 @@ def process_clip(self, clip_id: str, job_id: str):
                     timestamp_seconds=strike["timestamp_seconds"],
                     frame_index=strike["frame_index"],
                     confidence=None,  # rules-based has no confidence score
+                    arm_extension=strike.get("arm_extension"),
+                    guard_dropped=strike.get("guard_dropped"),
                 ))
             db.commit()
             logger.info(f"Wrote {len(strikes_data)} strikes to Postgres")
@@ -243,10 +248,19 @@ def _process_video(tmp_path: str, job_id: str, job, db) -> tuple:
     return frames_data, strikes_data, frame_index
 
 
-# COCO 17 keypoint indices (replace in _classify_strike):
-# 9  = left wrist   10 = right wrist
-# 15 = left ankle   16 = right ankle
-# 7  = left elbow   8  = right elbow
+# COCO 17 keypoint indices used here:
+# 0  = nose
+# 5  = left shoulder   6  = right shoulder
+# 7  = left elbow      8  = right elbow
+# 9  = left wrist      10 = right wrist
+# 15 = left ankle      16 = right ankle
+
+def _distance(kps, a, b) -> float:
+    """Euclidean distance between two keypoints (normalized 0-1 coords)."""
+    dx = kps[a]["x"] - kps[b]["x"]
+    dy = kps[a]["y"] - kps[b]["y"]
+    return round((dx**2 + dy**2) ** 0.5, 4)
+
 
 def _classify_strike(history, current_frame, last_strike_frame):
     if current_frame - last_strike_frame < STRIKE_COOLDOWN_FRAMES:
@@ -265,27 +279,59 @@ def _classify_strike(history, current_frame, last_strike_frame):
     la_vel, la_dx, la_dy = velocity(15)  # left ankle
     ra_vel, ra_dx, ra_dy = velocity(16)  # right ankle
 
-    left_elbow_x  = current[7]["x"]
-    left_wrist_x  = current[9]["x"]
-    right_elbow_x = current[8]["x"]
-    right_wrist_x = current[10]["x"]
+    left_hook_shape  = abs(current[9]["x"]  - current[7]["x"]) < 0.1
+    right_hook_shape = abs(current[10]["x"] - current[8]["x"]) < 0.1
 
-    left_hook_shape  = abs(left_wrist_x  - left_elbow_x)  < 0.1
-    right_hook_shape = abs(right_wrist_x - right_elbow_x) < 0.1
+    # Determine strike type and which side threw it
+    strike_type = None
+    striking_side = None  # "right" | "left" | "kick"
 
     if rw_vel > STRIKE_VELOCITY_THRESHOLD and abs(rw_dx) > abs(rw_dy):
-        return {"type": "hook"} if right_hook_shape else {"type": "jab"}
+        strike_type = "hook" if right_hook_shape else "jab"
+        striking_side = "right"
+    elif lw_vel > STRIKE_VELOCITY_THRESHOLD and abs(lw_dx) > abs(lw_dy):
+        strike_type = "hook" if left_hook_shape else "cross"
+        striking_side = "left"
+    elif ra_vel > STRIKE_VELOCITY_THRESHOLD and ra_dy < -0.01:
+        strike_type = "roundhouse_kick"
+        striking_side = "kick"
+    elif la_vel > STRIKE_VELOCITY_THRESHOLD and la_dy < -0.01:
+        strike_type = "rear_kick"
+        striking_side = "kick"
 
-    if lw_vel > STRIKE_VELOCITY_THRESHOLD and abs(lw_dx) > abs(lw_dy):
-        return {"type": "hook"} if left_hook_shape else {"type": "cross"}
+    if strike_type is None:
+        return None
 
-    if ra_vel > STRIKE_VELOCITY_THRESHOLD and ra_dy < -0.01:
-        return {"type": "roundhouse_kick"}
+    # --- arm_extension: shoulder-to-wrist distance at peak velocity ---
+    # Larger value = more extended arm. Kicks have no arm_extension.
+    arm_extension = None
+    if striking_side == "right":
+        if current[6]["visibility"] > MIN_KEYPOINT_CONF and current[10]["visibility"] > MIN_KEYPOINT_CONF:
+            arm_extension = _distance(current, 6, 10)  # right shoulder → right wrist
+    elif striking_side == "left":
+        if current[5]["visibility"] > MIN_KEYPOINT_CONF and current[9]["visibility"] > MIN_KEYPOINT_CONF:
+            arm_extension = _distance(current, 5, 9)   # left shoulder → left wrist
 
-    if la_vel > STRIKE_VELOCITY_THRESHOLD and la_dy < -0.01:
-        return {"type": "rear_kick"}
+    # --- guard_dropped: was the opposite hand below the nose during the strike? ---
+    # In image coords y increases downward, so wrist_y > nose_y means hand is below nose.
+    guard_dropped = None
+    nose_y = current[0]["y"]
+    if current[0]["visibility"] > MIN_KEYPOINT_CONF:
+        if striking_side == "right" and current[9]["visibility"] > MIN_KEYPOINT_CONF:
+            guard_dropped = bool(current[9]["y"] > nose_y)   # left (guard) wrist below nose?
+        elif striking_side == "left" and current[10]["visibility"] > MIN_KEYPOINT_CONF:
+            guard_dropped = bool(current[10]["y"] > nose_y)  # right (guard) wrist below nose?
+        elif striking_side == "kick":
+            lw_conf = current[9]["visibility"]
+            rw_conf = current[10]["visibility"]
+            if lw_conf > MIN_KEYPOINT_CONF and rw_conf > MIN_KEYPOINT_CONF:
+                guard_dropped = bool(current[9]["y"] > nose_y or current[10]["y"] > nose_y)
 
-    return None
+    return {
+        "type": strike_type,
+        "arm_extension": arm_extension,
+        "guard_dropped": guard_dropped,
+    }
 
 
 def _write_results_to_s3(s3_key: str, data: dict):

@@ -26,6 +26,10 @@ export default function SessionPage() {
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
 
+  const [feedback, setFeedback] = useState(null)
+  const [feedbackLoading, setFeedbackLoading] = useState(false)
+  const [feedbackError, setFeedbackError] = useState(null)
+
   async function loadSession() {
     try {
       const data = await api.get(`/sessions/${sessionId}`)
@@ -35,6 +39,19 @@ export default function SessionPage() {
       else console.error('Failed to load session', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function fetchFeedback() {
+    setFeedbackLoading(true)
+    setFeedbackError(null)
+    try {
+      const data = await api.get(`/sessions/${sessionId}/feedback`)
+      setFeedback(data.feedback)
+    } catch (err) {
+      setFeedbackError(err.message || 'Failed to generate feedback')
+    } finally {
+      setFeedbackLoading(false)
     }
   }
 
@@ -74,31 +91,27 @@ export default function SessionPage() {
           <>
             {/* Session header */}
             <div className="mb-8">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h1 className="text-2xl font-semibold">
-                    {session.label || 'Untitled session'}
-                  </h1>
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className="text-xs px-2.5 py-1 bg-gray-800 text-gray-300 rounded-full">
-                      {SPORT_LABELS[session.sport] || session.sport}
-                    </span>
-                    {session.session_type && (
-                      <span className="text-xs px-2.5 py-1 bg-gray-800 text-gray-300 rounded-full">
-                        {SESSION_TYPE_LABELS[session.session_type] || session.session_type}
-                      </span>
-                    )}
-                    <span className="text-xs text-gray-500">
-                      {new Date(session.created_at).toLocaleDateString('en-US', {
-                        month: 'long', day: 'numeric', year: 'numeric'
-                      })}
-                    </span>
-                  </div>
-                  {session.notes && (
-                    <p className="mt-3 text-sm text-gray-400">{session.notes}</p>
-                  )}
-                </div>
+              <h1 className="text-2xl font-semibold">
+                {session.label || 'Untitled session'}
+              </h1>
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-xs px-2.5 py-1 bg-gray-800 text-gray-300 rounded-full">
+                  {SPORT_LABELS[session.sport] || session.sport}
+                </span>
+                {session.session_type && (
+                  <span className="text-xs px-2.5 py-1 bg-gray-800 text-gray-300 rounded-full">
+                    {SESSION_TYPE_LABELS[session.session_type] || session.session_type}
+                  </span>
+                )}
+                <span className="text-xs text-gray-500">
+                  {new Date(session.created_at).toLocaleDateString('en-US', {
+                    month: 'long', day: 'numeric', year: 'numeric'
+                  })}
+                </span>
               </div>
+              {session.notes && (
+                <p className="mt-3 text-sm text-gray-400">{session.notes}</p>
+              )}
             </div>
 
             {/* Metrics row */}
@@ -121,8 +134,46 @@ export default function SessionPage() {
               <MetricCard
                 label="Avg arm extension"
                 value={session.metrics.avg_arm_extension}
-                format={n => `${Math.round(n * 100)}%`}
+                format={n => n.toFixed(2)}
               />
+            </div>
+
+            {/* AI Coaching feedback */}
+            <div className="mb-10">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold">Coaching feedback</h2>
+                <button
+                  onClick={fetchFeedback}
+                  disabled={feedbackLoading}
+                  className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg transition-colors"
+                >
+                  {feedbackLoading ? 'Analysing...' : feedback ? 'Regenerate' : 'Get feedback'}
+                </button>
+              </div>
+
+              {feedbackLoading && (
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                  <p className="text-sm text-gray-500 animate-pulse">
+                    Analysing your session data...
+                  </p>
+                </div>
+              )}
+
+              {feedbackError && !feedbackLoading && (
+                <p className="text-sm text-red-400">{feedbackError}</p>
+              )}
+
+              {feedback && !feedbackLoading && (
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 text-sm text-gray-300 leading-relaxed">
+                  {renderFeedback(feedback)}
+                </div>
+              )}
+
+              {!feedback && !feedbackLoading && !feedbackError && (
+                <p className="text-sm text-gray-600">
+                  Click "Get feedback" to generate AI coaching notes for this session.
+                </p>
+              )}
             </div>
 
             {/* Clips list */}
@@ -161,4 +212,28 @@ function MetricCard({ label, value, format }) {
       </p>
     </div>
   )
+}
+
+
+// Renders LLM output — handles **bold** markers from the model's formatted response
+function renderFeedback(text) {
+  return text.split('\n').map((line, i) => {
+    if (!line.trim()) return <div key={i} className="h-2" />
+
+    const isBold = line.startsWith('**') && line.includes('**', 2)
+    if (isBold) {
+      const inner = line.replace(/^\*\*/, '').replace(/\*\*$/, '')
+      return <p key={i} className="font-semibold text-white mt-3 first:mt-0">{inner}</p>
+    }
+
+    // Inline **bold** within a line
+    const parts = line.split(/\*\*(.*?)\*\*/g)
+    return (
+      <p key={i} className="text-gray-300">
+        {parts.map((part, j) =>
+          j % 2 === 1 ? <strong key={j} className="text-white">{part}</strong> : part
+        )}
+      </p>
+    )
+  })
 }
