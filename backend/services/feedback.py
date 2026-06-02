@@ -4,9 +4,13 @@ LLM feedback pipeline.
 build_session_summary() — aggregates strike rows into a structured dict
 build_feedback_prompt() — turns the summary into a system + user prompt
 generate_feedback()     — calls DeepSeek and returns the coaching text
+compute_session_hash()  — MD5 of summary dict, used for cache invalidation
 """
 
-from openai import AsyncOpenAI
+import hashlib
+import json
+
+from openai import AsyncOpenAI, OpenAI
 from core.config import settings
 
 
@@ -217,3 +221,30 @@ async def generate_feedback(summary: dict) -> str:
     )
 
     return response.choices[0].message.content
+
+
+def generate_feedback_sync(summary: dict) -> str:
+    """Synchronous version for use in Celery workers (which run in a sync context)."""
+    system, user_message = build_feedback_prompt(summary)
+
+    client = OpenAI(
+        api_key=settings.DEEPSEEK_API_KEY,
+        base_url="https://api.deepseek.com/v1",
+    )
+
+    response = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_message},
+        ],
+        max_tokens=400,
+        temperature=0.7,
+    )
+
+    return response.choices[0].message.content
+
+
+def compute_session_hash(summary: dict) -> str:
+    """MD5 of the session summary dict — used to detect when cached feedback is stale."""
+    return hashlib.md5(json.dumps(summary, sort_keys=True).encode()).hexdigest()

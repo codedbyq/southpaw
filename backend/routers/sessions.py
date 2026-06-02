@@ -1,9 +1,9 @@
 import uuid
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
-from datetime import datetime
 
 from dependencies import get_current_user
 from db.session import get_db
@@ -12,7 +12,7 @@ from models.clip import Clip
 from models.job import Job
 from models.strike import Strike
 from routers.clips import _build_clip_response, ClipResponse
-from services.feedback import build_session_summary, generate_feedback
+from services.feedback import build_session_summary, compute_session_hash, generate_feedback
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -58,6 +58,8 @@ class SessionDetailResponse(BaseModel):
     created_at: datetime
     clips: list[ClipResponse]
     metrics: SessionMetrics
+    llm_summary: str | None = None
+    llm_summary_dirty: bool = True
 
 
 # --- Routes ---
@@ -129,6 +131,8 @@ async def get_session(
         created_at=session.created_at,
         clips=clip_responses,
         metrics=metrics,
+        llm_summary=session.llm_summary,
+        llm_summary_dirty=session.llm_summary_dirty,
     )
 
 
@@ -138,7 +142,7 @@ async def get_session_feedback(
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate LLM coaching feedback for a session. Calls DeepSeek on every request."""
+    """Return cached LLM feedback or generate fresh if dirty/missing."""
     session = await _get_session_for_user(session_id, user_id, db)
 
     clips_result = await db.execute(
@@ -164,9 +168,20 @@ async def get_session_feedback(
     if not strikes:
         raise HTTPException(status_code=400, detail="No processed strikes in this session yet — upload and process a clip first")
 
+    summary = build_session_summary(session, clips, strikes)
+    current_hash = compute_session_hash(summary)
+
+    # Return cached feedback if the session is clean and the data hasn't changed
+    if session.llm_summary and not session.llm_summary_dirty and session.llm_summary_hash == current_hash:
+        return {"feedback": session.llm_summary}
+
     try:
-        summary = build_session_summary(session, clips, strikes)
         feedback = await generate_feedback(summary)
+        session.llm_summary = feedback
+        session.llm_summary_hash = current_hash
+        session.llm_summary_dirty = False
+        session.llm_summary_at = datetime.now(timezone.utc)
+        await db.commit()
         return {"feedback": feedback}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"LLM call failed: {exc}")

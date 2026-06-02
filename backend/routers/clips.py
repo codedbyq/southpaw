@@ -9,9 +9,8 @@ from dependencies import get_current_user
 from db.session import get_db
 from models.clip import Clip
 from models.job import Job
-from models.strike import Strike
+from models.session import Session
 from core.s3 import generate_presigned_download_url
-from services.feedback import build_clip_summary, generate_feedback
 
 router = APIRouter(prefix="/clips", tags=["clips"])
 
@@ -34,6 +33,7 @@ class ClipResponse(BaseModel):
     status: str
     sport: str
     session_id: str | None
+    feedback: str | None
     created_at: datetime
     job: JobSummary | None
     result_url: str | None      # presigned URL for keypoint JSON
@@ -77,27 +77,11 @@ async def get_clip_feedback(
     clerk_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate LLM coaching feedback for a single clip."""
+    """Return pre-generated coaching feedback for a clip (written by the Celery task)."""
     clip = await _get_clip_for_user(clip_id, clerk_user_id, db)
-
-    job_result = await db.execute(select(Job).where(Job.clip_id == clip.id))
-    job = job_result.scalar_one_or_none()
-
-    if not job or job.status != "complete":
-        raise HTTPException(status_code=400, detail="Clip has not been processed yet")
-
-    strikes_result = await db.execute(select(Strike).where(Strike.job_id == job.id))
-    strikes = strikes_result.scalars().all()
-
-    if not strikes:
-        raise HTTPException(status_code=400, detail="No strikes detected in this clip")
-
-    try:
-        summary = build_clip_summary(clip, strikes)
-        feedback = await generate_feedback(summary)
-        return {"feedback": feedback}
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"LLM call failed: {exc}")
+    if not clip.feedback:
+        raise HTTPException(status_code=404, detail="Feedback not yet available")
+    return {"feedback": clip.feedback}
 
 
 @router.delete("/{clip_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -108,6 +92,14 @@ async def delete_clip(
 ):
     """Delete clip from S3 and DB. Cascades to job and strikes."""
     clip = await _get_clip_for_user(clip_id, clerk_user_id, db)
+
+    # Mark the parent session dirty before removing this clip
+    if clip.session_id:
+        session_result = await db.execute(select(Session).where(Session.id == clip.session_id))
+        session = session_result.scalar_one_or_none()
+        if session:
+            session.llm_summary_dirty = True
+            await db.commit()
 
     # Delete raw video from S3
     from core.s3 import s3_client
@@ -173,6 +165,7 @@ async def _build_clip_response(clip: Clip, db: AsyncSession) -> ClipResponse:
         status=clip.status,
         sport=clip.sport,
         session_id=str(clip.session_id) if clip.session_id else None,
+        feedback=clip.feedback,
         created_at=clip.created_at,
         job=JobSummary(
             id=str(job.id),
