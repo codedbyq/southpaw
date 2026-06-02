@@ -12,8 +12,10 @@ from worker.celery_app import celery_app
 from worker.db import get_sync_session
 from models.job import Job
 from models.clip import Clip
+from models.session import Session
 from models.strike import Strike
 from core.config import settings
+from services.feedback import build_clip_summary, generate_feedback_sync
 import redis as redis_lib
 import subprocess
 
@@ -96,6 +98,24 @@ def process_clip(self, clip_id: str, job_id: str):
                 ))
             db.commit()
             logger.info(f"Wrote {len(strikes_data)} strikes to Postgres")
+
+            # Generate and store clip-level feedback (non-fatal if LLM call fails)
+            try:
+                strikes_for_feedback = db.execute(select(Strike).where(Strike.job_id == job.id)).scalars().all()
+                if strikes_for_feedback:
+                    summary = build_clip_summary(clip, strikes_for_feedback)
+                    clip.feedback = generate_feedback_sync(summary)
+                    db.commit()
+                    logger.info(f"Generated clip feedback for clip {clip_id}")
+            except Exception as feedback_exc:
+                logger.warning(f"Clip feedback generation failed (non-fatal): {feedback_exc}")
+
+            # Mark parent session dirty — new strike data means cached feedback is stale
+            if clip.session_id:
+                session = db.execute(select(Session).where(Session.id == clip.session_id)).scalar_one_or_none()
+                if session:
+                    session.llm_summary_dirty = True
+                    db.commit()
 
             # Step 5 — mark job complete
             job.status = "complete"

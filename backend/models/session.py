@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, String, DateTime
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from db.session import Base
 
@@ -17,3 +17,8 @@ class Session(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+    llm_summary: Mapped[str | None] = mapped_column(String, nullable=True)
+    llm_summary_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    llm_summary_dirty: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    llm_summary_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    precomputed_summary_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

@@ -10,6 +10,7 @@ from worker.tasks import process_clip
 from db.session import get_db
 from models.clip import Clip
 from models.job import Job
+from models.session import Session
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -83,6 +84,14 @@ async def upload_init(
     db.add(clip)
     await db.commit()
     await db.refresh(clip)
+
+    # Clip added to a session — mark that session's LLM summary as stale
+    if clip.session_id:
+        session_result = await db.execute(select(Session).where(Session.id == clip.session_id))
+        session = session_result.scalar_one_or_none()
+        if session:
+            session.llm_summary_dirty = True
+            await db.commit()
 
     upload_url = generate_presigned_upload_url(s3_key, body.content_type)
 

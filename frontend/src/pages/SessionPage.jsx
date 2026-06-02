@@ -27,6 +27,7 @@ export default function SessionPage() {
   const [notFound, setNotFound] = useState(false)
 
   const [feedback, setFeedback] = useState(null)
+  const [feedbackDirty, setFeedbackDirty] = useState(true)
   const [feedbackLoading, setFeedbackLoading] = useState(false)
   const [feedbackError, setFeedbackError] = useState(null)
 
@@ -34,6 +35,9 @@ export default function SessionPage() {
     try {
       const data = await api.get(`/sessions/${sessionId}`)
       setSession(data)
+      // Seed from cached summary if available
+      if (data.llm_summary) setFeedback(data.llm_summary)
+      setFeedbackDirty(data.llm_summary_dirty)
     } catch (err) {
       if (err.message === 'Session not found') setNotFound(true)
       else console.error('Failed to load session', err)
@@ -48,6 +52,7 @@ export default function SessionPage() {
     try {
       const data = await api.get(`/sessions/${sessionId}/feedback`)
       setFeedback(data.feedback)
+      setFeedbackDirty(false)
     } catch (err) {
       setFeedbackError(err.message || 'Failed to generate feedback')
     } finally {
@@ -142,13 +147,23 @@ export default function SessionPage() {
             <div className="mb-10">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold">Coaching feedback</h2>
-                <button
-                  onClick={fetchFeedback}
-                  disabled={feedbackLoading}
-                  className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg transition-colors"
-                >
-                  {feedbackLoading ? 'Analysing...' : feedback ? 'Regenerate' : 'Get feedback'}
-                </button>
+                {(!feedback || feedbackDirty) && (
+                  <button
+                    onClick={fetchFeedback}
+                    disabled={feedbackLoading}
+                    className={`px-3 py-1.5 text-sm disabled:opacity-50 text-white rounded-lg transition-colors ${
+                      feedbackDirty && feedback
+                        ? 'bg-amber-600 hover:bg-amber-500'
+                        : 'bg-indigo-600 hover:bg-indigo-500'
+                    }`}
+                  >
+                    {feedbackLoading
+                      ? 'Analysing...'
+                      : feedbackDirty && feedback
+                        ? 'Re-analyse'
+                        : 'Analyse session'}
+                  </button>
+                )}
               </div>
 
               {feedbackLoading && (
@@ -171,7 +186,7 @@ export default function SessionPage() {
 
               {!feedback && !feedbackLoading && !feedbackError && (
                 <p className="text-sm text-gray-600">
-                  Click "Get feedback" to generate AI coaching notes for this session.
+                  Click "Analyse session" to generate AI coaching notes.
                 </p>
               )}
             </div>
