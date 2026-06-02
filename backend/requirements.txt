@@ -15,3 +15,4 @@ ultralytics
 opencv-python-headless
 pyjwt[crypto]
 openai
+svix

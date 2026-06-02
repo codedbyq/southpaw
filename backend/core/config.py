@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     CLERK_SECRET_KEY: str
     CLERK_AUTHORIZED_PARTIES: str = "http://localhost:5173"
     CLERK_FRONTEND_API: str
+    CLERK_WEBHOOK_SECRET: str = ""  # set in .env after creating webhook in Clerk dashboard
 
     # Database
     DATABASE_URL: str

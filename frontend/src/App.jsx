@@ -1,14 +1,22 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from '@clerk/react'
+import { useCurrentUser } from './hooks/useCurrentUser'
 import HomePage from './pages/HomePage'
+import OnboardingPage from './pages/OnboardingPage'
 import DashboardPage from './pages/DashboardPage'
 import PlayerPage from './pages/PlayerPage'
 import SessionPage from './pages/SessionPage'
 
 function ProtectedRoute({ children }) {
   const { isSignedIn, isLoaded } = useAuth()
-  if (!isLoaded) return null
+  const { user, loading } = useCurrentUser()
+
+  if (!isLoaded || loading) return null
   if (!isSignedIn) return <Navigate to="/" replace />
+
+  // Onboarding not complete — redirect to onboarding
+  if (user?.user_type === null) return <Navigate to="/onboarding" replace />
+
   return children
 }
 
@@ -16,6 +24,7 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      <Route path="/onboarding" element={<OnboardingPage />} />
       <Route
         path="/dashboard"
         element={
