@@ -38,6 +38,7 @@ class ClipResponse(BaseModel):
     job: JobSummary | None
     result_url: str | None      # presigned URL for keypoint JSON
     video_url: str | None       # presigned URL for raw video
+    thumbnail_url: str | None   # presigned URL for thumbnail image
 
     class Config:
         from_attributes = True
@@ -101,13 +102,14 @@ async def delete_clip(
             session.llm_summary_dirty = True
             await db.commit()
 
-    # Delete raw video from S3
+    # Delete raw video and thumbnail from S3
     from core.s3 import s3_client
     from core.config import settings
-    try:
-        s3_client.delete_object(Bucket=settings.S3_BUCKET_NAME, Key=clip.s3_key)
-    except Exception:
-        pass  # Don't block DB delete if S3 delete fails
+    for key in filter(None, [clip.s3_key, clip.thumbnail_s3_key]):
+        try:
+            s3_client.delete_object(Bucket=settings.S3_BUCKET_NAME, Key=key)
+        except Exception:
+            pass  # Don't block DB delete if S3 delete fails
 
     # Delete processed JSON from S3 if it exists
     job_result = await db.execute(select(Job).where(Job.clip_id == clip.id))
@@ -154,9 +156,13 @@ async def _build_clip_response(clip: Clip, db: AsyncSession) -> ClipResponse:
 
     result_url = None
     video_url = generate_presigned_download_url(clip.s3_key)
+    thumbnail_url = None
 
     if job and job.result_s3_key:
         result_url = generate_presigned_download_url(job.result_s3_key)
+
+    if clip.thumbnail_s3_key:
+        thumbnail_url = generate_presigned_download_url(clip.thumbnail_s3_key)
 
     return ClipResponse(
         id=str(clip.id),
@@ -174,4 +180,5 @@ async def _build_clip_response(clip: Clip, db: AsyncSession) -> ClipResponse:
         ) if job else None,
         result_url=result_url,
         video_url=video_url,
+        thumbnail_url=thumbnail_url,
     )

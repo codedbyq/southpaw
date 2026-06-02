@@ -19,6 +19,7 @@ class Clip(Base):
         UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True
     )
     feedback: Mapped[str | None] = mapped_column(String, nullable=True)
+    thumbnail_s3_key: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
