@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { UserButton } from '@clerk/react'
+import { useNavigate } from 'react-router-dom'
 import { useApi } from '../api/client'
 import UploadButton from '../components/UploadButton'
 import ClipCard from '../components/ClipCard'
 import SessionCard from '../components/SessionCard'
+import StatsBar from '../components/StatsBar'
 
 const SPORTS = [
   { value: 'boxing',    label: 'Boxing' },
@@ -20,9 +22,18 @@ const SESSION_TYPES = [
 
 export default function DashboardPage() {
   const api = useApi()
+  const navigate = useNavigate()
   const [sessions, setSessions] = useState([])
   const [clips, setClips] = useState([])
   const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState(null)
+  const [currentUser, setCurrentUser] = useState(null)
+  const [hasCoachProfile, setHasCoachProfile] = useState(null)
+
+  // Trend feedback
+  const [trendFeedback, setTrendFeedback] = useState(null)
+  const [trendLoading, setTrendLoading] = useState(false)
+  const [trendError, setTrendError] = useState(null)
 
   // New session inline form
   const [showNewSession, setShowNewSession] = useState(false)
@@ -33,16 +44,50 @@ export default function DashboardPage() {
 
   async function loadData() {
     try {
-      const [sessionsData, clipsData] = await Promise.all([
+      const [sessionsData, clipsData, userData, statsData] = await Promise.all([
         api.get('/sessions'),
         api.get('/clips'),
+        api.get('/users/me'),
+        api.get('/users/me/stats'),
       ])
       setSessions(sessionsData)
       setClips(clipsData)
+      setStats(statsData)
+      setCurrentUser(userData)
+
+      // Check if coach has a profile set up
+      if (userData.user_type === 'coach') {
+        try {
+          await api.get('/coaches/me/profile')
+          setHasCoachProfile(true)
+        } catch {
+          setHasCoachProfile(false)
+        }
+      }
+
+      if (userData.trend_feedback) {
+        setTrendFeedback({
+          feedback: userData.trend_feedback,
+          session_count: sessionsData.filter(s => s.clip_count > 0).length,
+        })
+      }
     } catch (err) {
       console.error('Failed to load dashboard', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleTrendFeedback() {
+    setTrendLoading(true)
+    setTrendError(null)
+    try {
+      const data = await api.get('/sessions/trend-feedback')
+      setTrendFeedback(data)
+    } catch (err) {
+      setTrendError(err.message)
+    } finally {
+      setTrendLoading(false)
     }
   }
 
@@ -86,6 +131,80 @@ export default function DashboardPage() {
           <p className="text-gray-500 text-sm">Loading...</p>
         ) : (
           <>
+            <StatsBar stats={stats} />
+
+            {/* ── Coach profile prompt ── */}
+            {currentUser?.user_type === 'coach' && hasCoachProfile === false && (
+              <div className="mb-8 p-5 bg-indigo-950 border border-indigo-800 rounded-xl flex items-center justify-between">
+                <div>
+                  <p className="text-white font-medium text-sm">Set up your coach profile</p>
+                  <p className="text-indigo-300 text-xs mt-0.5">
+                    Add your bio, specializations, and credit rate to appear in the marketplace.
+                  </p>
+                </div>
+                <button
+                  onClick={() => navigate('/coach/profile')}
+                  className="ml-6 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0"
+                >
+                  Set up profile
+                </button>
+              </div>
+            )}
+
+            {/* ── Coach profile link (profile exists) ── */}
+            {currentUser?.user_type === 'coach' && hasCoachProfile === true && (
+              <div className="mb-8 flex justify-end">
+                <button
+                  onClick={() => navigate('/coach/profile')}
+                  className="text-sm text-gray-500 hover:text-white transition-colors"
+                >
+                  Edit coach profile →
+                </button>
+              </div>
+            )}
+
+            {/* ── Trend Feedback ── */}
+            {sessions.length >= 1 && (
+              <div className="mb-10 p-5 bg-gray-900 border border-gray-800 rounded-xl">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-white">Progress analysis</h2>
+                    <p className="text-xs text-gray-500 mt-0.5">AI coaching trends across your last sessions</p>
+                  </div>
+                  {sessions.length >= 2 && (
+                    <button
+                      onClick={handleTrendFeedback}
+                      disabled={trendLoading}
+                      className="text-sm px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg transition-colors"
+                    >
+                      {trendLoading ? 'Analysing...' : trendFeedback ? 'Refresh' : 'Analyse progress'}
+                    </button>
+                  )}
+                </div>
+
+                {sessions.length < 2 ? (
+                  <p className="text-sm text-gray-500">
+                    1 more session needed to unlock progress analysis.
+                  </p>
+                ) : trendError ? (
+                  <p className="text-red-400 text-sm">{trendError}</p>
+                ) : trendFeedback && !trendLoading ? (
+                  <div>
+                    <p className="text-xs text-gray-500 mb-3">
+                      Based on {trendFeedback.session_count} sessions
+                    </p>
+                    <div className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
+                      {trendFeedback.feedback}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">
+                    Click analyse to see how your training has progressed over time.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* ── Sessions ── */}
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-xl font-semibold">Your sessions</h2>

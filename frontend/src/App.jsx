@@ -6,6 +6,7 @@ import OnboardingPage from './pages/OnboardingPage'
 import DashboardPage from './pages/DashboardPage'
 import PlayerPage from './pages/PlayerPage'
 import SessionPage from './pages/SessionPage'
+import CoachProfilePage from './pages/CoachProfilePage'
 
 function ProtectedRoute({ children }) {
   const { isSignedIn, isLoaded } = useAuth()
@@ -25,6 +26,14 @@ function App() {
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/onboarding" element={<OnboardingPage />} />
+      <Route
+        path="/coach/profile"
+        element={
+          <ProtectedRoute>
+            <CoachProfilePage />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/dashboard"
         element={

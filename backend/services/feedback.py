@@ -248,3 +248,138 @@ def generate_feedback_sync(summary: dict) -> str:
 def compute_session_hash(summary: dict) -> str:
     """MD5 of the session summary dict — used to detect when cached feedback is stale."""
     return hashlib.md5(json.dumps(summary, sort_keys=True).encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Trend feedback (cross-session)
+# ---------------------------------------------------------------------------
+
+def build_trend_summary(sessions: list, strikes_by_session: dict) -> dict:
+    """
+    Build a structured summary across multiple sessions for trend analysis.
+    sessions: list of Session objects, ordered oldest → newest
+    strikes_by_session: dict of str(session_id) → list of Strike objects
+    """
+    session_data = []
+    for session in sessions:
+        strikes = strikes_by_session.get(str(session.id), [])
+        if not strikes:
+            continue
+        agg = _aggregate_strikes(strikes)
+        session_data.append({
+            "label": session.label or "Untitled session",
+            "sport": session.sport,
+            "session_type": session.session_type,
+            "date": session.created_at.strftime("%b %d"),
+            **agg,
+        })
+
+    # Compute first → last deltas for key metrics
+    deltas = {}
+    if len(session_data) >= 2:
+        first = session_data[0]
+        last = session_data[-1]
+
+        first_gd = first["guard_discipline"]["drop_rate"]
+        last_gd = last["guard_discipline"]["drop_rate"]
+        if first_gd is not None and last_gd is not None:
+            deltas["guard_drop_rate"] = round(last_gd - first_gd, 3)  # negative = improving
+
+        first_ext = first["arm_extension"]["avg"]
+        last_ext = last["arm_extension"]["avg"]
+        if first_ext is not None and last_ext is not None:
+            deltas["arm_extension_avg"] = round(last_ext - first_ext, 3)  # positive = improving
+
+        deltas["total_strikes"] = last["total_strikes"] - first["total_strikes"]
+
+    return {
+        "sport": sessions[0].sport if sessions else "boxing",
+        "session_count": len(session_data),
+        "sessions": session_data,
+        "deltas": deltas,
+    }
+
+
+def build_trend_prompt(summary: dict) -> tuple[str, str]:
+    """Returns (system_prompt, user_message) for trend analysis."""
+    sport = summary["sport"]
+    sport_label = SPORT_LABELS.get(sport, sport)
+    sport_ctx = SPORT_CONTEXT.get(sport, "")
+
+    system = f"""You are an expert martial arts coach specializing in {sport_label}.
+{sport_ctx}
+
+You are reviewing a fighter's progress across multiple training sessions over time.
+Identify clear trends — what is improving, what is plateauing, and what needs focused work.
+Format your response exactly like this:
+
+**Progress**
+- [specific trend referencing session data and the delta between first and last session]
+- [specific trend referencing session data]
+
+**Focus areas**
+- [specific metric that needs attention, with context from the trend data]
+- [specific metric that needs attention]
+
+Rules: reference actual numbers and session dates. Note whether metrics improved or declined \
+between first and last session. Keep total response under 250 words. Be direct — \
+tell the fighter what the data actually shows."""
+
+    lines = [
+        f"Sport: {sport_label}",
+        f"Sessions analysed: {summary['session_count']}",
+        "",
+    ]
+
+    for i, s in enumerate(summary["sessions"]):
+        label = s.get("label", f"Session {i + 1}")
+        date = s.get("date", "")
+        total = s["total_strikes"]
+        gd = s["guard_discipline"]["drop_rate"]
+        ext = s["arm_extension"]["avg"]
+
+        session_lines = [f"Session {i + 1} — {label} ({date}):"]
+        session_lines.append(f"  Strikes: {total}")
+        if gd is not None:
+            session_lines.append(f"  Guard drop rate: {round(gd * 100)}%")
+        if ext is not None:
+            session_lines.append(f"  Avg arm extension: {ext}")
+        lines.extend(session_lines)
+        lines.append("")
+
+    if summary["deltas"]:
+        lines.append("Deltas (first → last session):")
+        d = summary["deltas"]
+        if "guard_drop_rate" in d:
+            direction = "improved ↓" if d["guard_drop_rate"] < 0 else "worsened ↑"
+            lines.append(f"  Guard drop rate: {direction} by {abs(round(d['guard_drop_rate'] * 100))}%")
+        if "arm_extension_avg" in d:
+            direction = "improved ↑" if d["arm_extension_avg"] > 0 else "declined ↓"
+            lines.append(f"  Arm extension: {direction} by {abs(d['arm_extension_avg'])}")
+        if "total_strikes" in d:
+            direction = "up" if d["total_strikes"] > 0 else "down"
+            lines.append(f"  Strike volume: {direction} {abs(d['total_strikes'])} strikes")
+
+    return system, "\n".join(lines)
+
+
+async def generate_trend_feedback(summary: dict) -> str:
+    """Call DeepSeek with the trend summary and return the coaching text."""
+    system, user_message = build_trend_prompt(summary)
+
+    client = AsyncOpenAI(
+        api_key=settings.DEEPSEEK_API_KEY,
+        base_url="https://api.deepseek.com/v1",
+    )
+
+    response = await client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_message},
+        ],
+        max_tokens=500,
+        temperature=0.7,
+    )
+
+    return response.choices[0].message.content

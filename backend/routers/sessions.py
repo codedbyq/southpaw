@@ -12,7 +12,8 @@ from models.clip import Clip
 from models.job import Job
 from models.strike import Strike
 from routers.clips import _build_clip_response, ClipResponse
-from services.feedback import build_session_summary, compute_session_hash, generate_feedback
+from services.feedback import build_session_summary, compute_session_hash, generate_feedback, build_trend_summary, generate_trend_feedback
+from models.user import User
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -88,6 +89,80 @@ async def list_sessions(
             **metrics,
         ))
     return responses
+
+
+@router.get("/trend-feedback")
+async def get_trend_feedback(
+    clerk_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate and cache trend feedback across the user's last 5 sessions.
+    Requires at least 2 sessions with processed strikes.
+    """
+    # Fetch last 5 sessions oldest → newest
+    sessions_result = await db.execute(
+        select(Session)
+        .where(Session.clerk_user_id == clerk_user_id)
+        .order_by(Session.created_at.asc())
+        .limit(5)
+    )
+    sessions = sessions_result.scalars().all()
+
+    if len(sessions) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 sessions needed for trend analysis")
+
+    # Gather strikes per session
+    strikes_by_session: dict[str, list] = {}
+    for session in sessions:
+        clips_result = await db.execute(
+            select(Clip).where(Clip.session_id == session.id)
+        )
+        clips = clips_result.scalars().all()
+        if not clips:
+            continue
+
+        jobs_result = await db.execute(
+            select(Job).where(
+                Job.clip_id.in_([c.id for c in clips]),
+                Job.status == "complete",
+            )
+        )
+        jobs = jobs_result.scalars().all()
+        if not jobs:
+            continue
+
+        strikes_result = await db.execute(
+            select(Strike).where(Strike.job_id.in_([j.id for j in jobs]))
+        )
+        strikes_by_session[str(session.id)] = strikes_result.scalars().all()
+
+    sessions_with_data = [s for s in sessions if strikes_by_session.get(str(s.id))]
+    if len(sessions_with_data) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="At least 2 sessions with processed clips needed for trend analysis",
+        )
+
+    # Build summary and generate feedback
+    summary = build_trend_summary(sessions_with_data, strikes_by_session)
+    try:
+        feedback = await generate_trend_feedback(summary)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to generate trend feedback: {e}")
+
+    # Cache on user row
+    user_result = await db.execute(select(User).where(User.clerk_user_id == clerk_user_id))
+    user = user_result.scalar_one_or_none()
+    if user:
+        user.trend_feedback = feedback
+        user.trend_feedback_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    return {
+        "feedback": feedback,
+        "session_count": len(sessions_with_data),
+    }
 
 
 @router.get("/{session_id}", response_model=SessionDetailResponse)
