@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Load YOLOv8 pose model once at module level
 # Downloads automatically on first run (~6MB)
-model = YOLO("yolov8n-pose.pt")  # n = nano, fastest version, good for MVP
+model = YOLO("yolov8s-pose.pt")  # s = small, better keypoint accuracy than nano
 
 # S3 client for the worker
 s3 = boto3.client(
@@ -71,12 +71,22 @@ def process_clip(self, clip_id: str, job_id: str):
             tmp_path = _download_clip(clip.s3_key)
             logger.info(f"Downloaded clip to {tmp_path}")
 
-            # Step 2 — run MediaPipe frame by frame
+            # Step 2 — extract and store thumbnail (non-fatal)
+            try:
+                thumb_key = _extract_and_upload_thumbnail(tmp_path, clip_id, clip.clerk_user_id)
+                if thumb_key:
+                    clip.thumbnail_s3_key = thumb_key
+                    db.commit()
+                    logger.info(f"Uploaded thumbnail for clip {clip_id}")
+            except Exception as thumb_exc:
+                logger.warning(f"Thumbnail generation failed (non-fatal): {thumb_exc}")
+
+            # Step 3 — run YOLOv8 frame by frame
             frames_data, strikes_data, total_frames = _process_video(
                 tmp_path, job_id, job, db
             )
 
-            # Step 3 — write keypoint JSON to S3
+            # Step 4 — write keypoint JSON to S3
             result_s3_key = f"processed/{clip.clerk_user_id}/{clip_id}/keypoints.json"
             _write_results_to_s3(result_s3_key, {
                 "clip_id": clip_id,
@@ -85,7 +95,7 @@ def process_clip(self, clip_id: str, job_id: str):
             })
             logger.info(f"Wrote keypoint JSON to S3: {result_s3_key}")
 
-            # Step 4 — write strike rows to Postgres
+            # Step 5 — write strike rows to Postgres
             for strike in strikes_data:
                 db.add(Strike(
                     job_id=job.id,
@@ -117,7 +127,7 @@ def process_clip(self, clip_id: str, job_id: str):
                     session.llm_summary_dirty = True
                     db.commit()
 
-            # Step 5 — mark job complete
+            # Step 6 — mark job complete
             job.status = "complete"
             job.progress = 100
             job.result_s3_key = result_s3_key
@@ -137,6 +147,40 @@ def process_clip(self, clip_id: str, job_id: str):
             # Always clean up the temp file
             if 'tmp_path' in locals() and os.path.exists(tmp_path):
                 os.remove(tmp_path)
+
+
+def _extract_and_upload_thumbnail(video_path: str, clip_id: str, user_id: str) -> str | None:
+    """Extract a frame ~1s in, upload as JPEG to S3. Returns the S3 key or None."""
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    target_frame = int(fps)  # 1 second in
+    cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+    ret, frame = cap.read()
+    cap.release()
+
+    if not ret:
+        # Fall back to frame 0 if seek failed
+        cap = cv2.VideoCapture(video_path)
+        ret, frame = cap.read()
+        cap.release()
+
+    if not ret or frame is None:
+        return None
+
+    # Apply rotation so thumbnail matches browser rendering
+    rotation = _get_video_rotation(video_path)
+    if rotation:
+        frame = _apply_rotation(frame, rotation)
+
+    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    key = f"clips/{clip_id}/thumbnail.jpg"
+    s3.put_object(
+        Bucket=settings.S3_BUCKET_NAME,
+        Key=key,
+        Body=buf.tobytes(),
+        ContentType="image/jpeg",
+    )
+    return key
 
 
 def _download_clip(s3_key: str) -> str:
