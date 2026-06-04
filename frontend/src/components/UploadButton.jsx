@@ -28,12 +28,15 @@ export default function UploadButton({ onUploadComplete }) {
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState(null)
   const [file, setFile] = useState(null)
+  const [autoNavigate, setAutoNavigate] = useState(true)
+  const [clipNotes, setClipNotes] = useState('')
 
   const [sport, setSport] = useState('boxing')
   const [sessions, setSessions] = useState([])
   const [sessionValue, setSessionValue] = useState('')   // '' = skip, uuid = existing, 'new' = create inline
   const [newLabel, setNewLabel] = useState('')
   const [newSessionType, setNewSessionType] = useState('sparring')
+  const [newSessionNotes, setNewSessionNotes] = useState('')
   const [durationSeconds, setDurationSeconds] = useState(null)
 
   async function handleFileChange(e) {
@@ -69,23 +72,56 @@ export default function UploadButton({ onUploadComplete }) {
       if (sessionValue === 'new') {
         const created = await api.post('/sessions', {
           label: newLabel || null,
+          notes: newSessionNotes || null,
           sport,
           session_type: newSessionType,
         })
         session_id = created.id
       }
 
-      const { clip_id, upload_url } = await api.post('/uploads/init', {
+      // Multipart upload — split into 10MB chunks
+      const CHUNK_SIZE = 10 * 1024 * 1024
+
+      const { clip_id, upload_id, s3_key, part_urls } = await api.post('/uploads/multipart/init', {
         filename: file.name,
         content_type: file.type,
+        file_size: file.size,
         sport,
         session_id,
         duration_seconds: durationSeconds,
+        notes: clipNotes.trim() || null,
       })
 
-      await uploadToS3(file, upload_url, (pct) => setProgress(pct))
+      // Upload parts with max 3 concurrent
+      const parts = []
+      const concurrency = 3
+      let uploaded = 0
 
-      const { job_id } = await api.post('/uploads/complete', { clip_id })
+      async function uploadPart({ part_number, url }) {
+        const start = (part_number - 1) * CHUNK_SIZE
+        const chunk = file.slice(start, start + CHUNK_SIZE)
+        const res = await fetch(url, { method: 'PUT', body: chunk })
+        if (!res.ok) throw new Error(`Part ${part_number} failed`)
+        const etag = res.headers.get('ETag')
+        parts.push({ part_number, etag })
+        uploaded++
+        setProgress(Math.round((uploaded / part_urls.length) * 90))
+      }
+
+      // Process in batches of `concurrency`
+      for (let i = 0; i < part_urls.length; i += concurrency) {
+        await Promise.all(part_urls.slice(i, i + concurrency).map(uploadPart))
+      }
+
+      // Sort parts by part_number (required by S3)
+      parts.sort((a, b) => a.part_number - b.part_number)
+
+      const { job_id } = await api.post('/uploads/multipart/complete', {
+        clip_id,
+        upload_id,
+        s3_key,
+        parts,
+      })
 
       const token = await getToken()
       setState('processing')
@@ -106,7 +142,12 @@ export default function UploadButton({ onUploadComplete }) {
 
       if (succeeded) {
         if (onUploadComplete) onUploadComplete()
-        navigate(`/clips/${clip_id}`)
+        if (autoNavigate) {
+          navigate(`/clips/${clip_id}`)
+        } else {
+          setState('idle')
+          setProgress(0)
+        }
       }
 
     } catch (err) {
@@ -214,8 +255,45 @@ export default function UploadButton({ onUploadComplete }) {
                   ))}
                 </select>
               </div>
+              <div className="flex flex-col gap-1 w-full">
+                <label className="text-xs text-gray-500">Session notes (optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Focusing on combinations and footwork"
+                  value={newSessionNotes}
+                  onChange={e => setNewSessionNotes(e.target.value)}
+                  className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg w-full"
+                />
+              </div>
             </div>
           )}
+
+          {/* Clip notes */}
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">
+              What are you working on? <span className="text-gray-600">(optional — helps the AI focus its feedback)</span>
+            </label>
+            <textarea
+              value={clipNotes}
+              onChange={e => setClipNotes(e.target.value)}
+              placeholder="e.g. Drilling hooks, working on guard after the jab, round 3 sparring..."
+              rows={2}
+              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
+            />
+          </div>
+
+          {/* Auto-navigate toggle */}
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={autoNavigate}
+              onChange={e => setAutoNavigate(e.target.checked)}
+              className="w-3.5 h-3.5 accent-indigo-500"
+            />
+            <span className="text-xs text-gray-400">
+              Open clip when processing completes
+            </span>
+          </label>
 
           <div className="flex gap-2">
             <button

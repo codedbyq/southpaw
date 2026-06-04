@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     CLERK_SECRET_KEY: str
     CLERK_AUTHORIZED_PARTIES: str = "http://localhost:5173"
     CLERK_FRONTEND_API: str
+    CLERK_WEBHOOK_SECRET: str = ""  # set in .env after creating webhook in Clerk dashboard
 
     # Database
     DATABASE_URL: str
@@ -21,6 +22,12 @@ class Settings(BaseSettings):
 
     # LLM
     DEEPSEEK_API_KEY: str
+
+    # Stripe
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRO_PRICE_ID: str = ""
+    STRIPE_ELITE_PRICE_ID: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

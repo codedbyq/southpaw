@@ -1,0 +1,173 @@
+import uuid
+import logging
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from dependencies import get_current_user
+from db.session import get_db
+from models.user import User
+from models.coach_profile import CoachProfile
+from services.notifications import create_notification
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+# --- Schemas ---
+
+class CoachProfileAdminView(BaseModel):
+    id: str
+    user_id: str
+    display_name: str | None
+    bio: str | None
+    specializations: list[str]
+    credit_rate: int | None
+    moderation_status: str
+    moderation_notes: str | None
+    marketplace_visible: bool
+    review_count: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ModerationAction(BaseModel):
+    notes: str | None = None
+
+
+# --- Auth dependency ---
+
+async def require_admin(
+    clerk_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    result = await db.execute(select(User).where(User.clerk_user_id == clerk_user_id))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return user
+
+
+# --- Routes ---
+
+@router.get("/coaches", response_model=list[CoachProfileAdminView])
+async def list_coach_profiles(
+    moderation_status: str | None = None,   # filter by status
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all coach profiles, optionally filtered by moderation status."""
+    query = select(CoachProfile).order_by(CoachProfile.created_at.desc())
+    if moderation_status:
+        query = query.where(CoachProfile.moderation_status == moderation_status)
+    result = await db.execute(query)
+    profiles = result.scalars().all()
+    return [_build_view(p) for p in profiles]
+
+
+@router.patch("/coaches/{profile_id}/approve", response_model=CoachProfileAdminView)
+async def approve_coach(
+    profile_id: uuid.UUID,
+    body: ModerationAction,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve a coach profile — makes them visible in the marketplace."""
+    profile = await _get_profile(profile_id, db)
+
+    was_pending = profile.moderation_status == "pending"
+    profile.moderation_status = "approved"
+    profile.marketplace_visible = True
+    if body.notes:
+        profile.moderation_notes = body.notes
+
+    # Notify coach they're approved
+    if was_pending:
+        await create_notification(
+            db,
+            user_id=profile.user_id,
+            type="coach_approved",
+            title="Your coach profile is approved",
+            body="Your profile is now live in the Southpaw marketplace. Athletes can find and request reviews from you.",
+            reference_type="coach_profile",
+        )
+
+    await db.commit()
+    logger.info(f"Admin {admin.id} approved coach profile {profile_id}")
+    return _build_view(profile)
+
+
+@router.patch("/coaches/{profile_id}/reject", response_model=CoachProfileAdminView)
+async def reject_coach(
+    profile_id: uuid.UUID,
+    body: ModerationAction,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reject a coach profile with an optional reason."""
+    profile = await _get_profile(profile_id, db)
+
+    profile.moderation_status = "rejected"
+    profile.marketplace_visible = False
+    profile.moderation_notes = body.notes
+
+    # Notify coach of rejection with reason
+    reason = f" Reason: {body.notes}" if body.notes else " Please update your profile and resubmit."
+    await create_notification(
+        db,
+        user_id=profile.user_id,
+        type="coach_rejected",
+        title="Coach profile needs updates",
+        body=f"Your profile was not approved at this time.{reason}",
+        reference_type="coach_profile",
+    )
+
+    await db.commit()
+    logger.info(f"Admin {admin.id} rejected coach profile {profile_id}")
+    return _build_view(profile)
+
+
+@router.patch("/coaches/{profile_id}/feature", response_model=CoachProfileAdminView)
+async def toggle_featured(
+    profile_id: uuid.UUID,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle featured status on an approved coach."""
+    profile = await _get_profile(profile_id, db)
+    if profile.moderation_status != "approved":
+        raise HTTPException(status_code=400, detail="Only approved coaches can be featured")
+    profile.is_featured = not profile.is_featured
+    await db.commit()
+    return _build_view(profile)
+
+
+# --- Helpers ---
+
+async def _get_profile(profile_id: uuid.UUID, db: AsyncSession) -> CoachProfile:
+    result = await db.execute(select(CoachProfile).where(CoachProfile.id == profile_id))
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Coach profile not found")
+    return profile
+
+
+def _build_view(profile: CoachProfile) -> CoachProfileAdminView:
+    return CoachProfileAdminView(
+        id=str(profile.id),
+        user_id=str(profile.user_id),
+        display_name=profile.display_name,
+        bio=profile.bio,
+        specializations=profile.specializations or [],
+        credit_rate=profile.credit_rate,
+        moderation_status=profile.moderation_status,
+        moderation_notes=profile.moderation_notes,
+        marketplace_visible=profile.marketplace_visible,
+        review_count=profile.review_count,
+        created_at=profile.created_at,
+    )

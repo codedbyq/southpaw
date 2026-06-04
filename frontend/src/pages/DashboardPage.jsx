@@ -1,9 +1,14 @@
 import { useState, useEffect } from 'react'
 import { UserButton } from '@clerk/react'
+import { useNavigate } from 'react-router-dom'
 import { useApi } from '../api/client'
 import UploadButton from '../components/UploadButton'
 import ClipCard from '../components/ClipCard'
 import SessionCard from '../components/SessionCard'
+import StatsBar from '../components/StatsBar'
+import BuyCreditsModal from '../components/BuyCreditsModal'
+import NotificationBell from '../components/NotificationBell'
+import StarRating from '../components/StarRating'
 
 const SPORTS = [
   { value: 'boxing',    label: 'Boxing' },
@@ -20,29 +25,95 @@ const SESSION_TYPES = [
 
 export default function DashboardPage() {
   const api = useApi()
+  const navigate = useNavigate()
   const [sessions, setSessions] = useState([])
   const [clips, setClips] = useState([])
   const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState(null)
+  const [currentUser, setCurrentUser] = useState(null)
+  const [hasCoachProfile, setHasCoachProfile] = useState(null)
+  const [athleteReviews, setAthleteReviews] = useState([])
+  const [ratingLoading, setRatingLoading] = useState(null)
+  const [showBuyCredits, setShowBuyCredits] = useState(false)
+  const [paymentBanner, setPaymentBanner] = useState(null) // 'success' | 'cancelled'
+
+  // Trend feedback
+  const [trendFeedback, setTrendFeedback] = useState(null)
+  const [trendLoading, setTrendLoading] = useState(false)
+  const [trendError, setTrendError] = useState(null)
 
   // New session inline form
   const [showNewSession, setShowNewSession] = useState(false)
   const [newLabel, setNewLabel] = useState('')
   const [newSport, setNewSport] = useState('boxing')
   const [newType, setNewType] = useState('sparring')
+  const [newNotes, setNewNotes] = useState('')
   const [creating, setCreating] = useState(false)
 
   async function loadData() {
     try {
-      const [sessionsData, clipsData] = await Promise.all([
+      const [sessionsData, clipsData, userData, statsData] = await Promise.all([
         api.get('/sessions'),
         api.get('/clips'),
+        api.get('/users/me'),
+        api.get('/users/me/stats'),
       ])
       setSessions(sessionsData)
       setClips(clipsData)
+      setStats(statsData)
+      setCurrentUser(userData)
+
+      // Load athlete reviews
+      try {
+        const reviewsData = await api.get('/reviews/me/athlete')
+        setAthleteReviews(reviewsData)
+      } catch {}
+
+      // Check if coach has a profile set up
+      if (userData.user_type === 'coach') {
+        try {
+          await api.get('/coaches/me/profile')
+          setHasCoachProfile(true)
+        } catch {
+          setHasCoachProfile(false)
+        }
+      }
+
+      if (userData.trend_feedback) {
+        setTrendFeedback({
+          feedback: userData.trend_feedback,
+          session_count: sessionsData.filter(s => s.clip_count > 0).length,
+        })
+      }
     } catch (err) {
       console.error('Failed to load dashboard', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleRateReview(reviewId, rating) {
+    setRatingLoading(reviewId)
+    try {
+      const updated = await api.patch(`/reviews/${reviewId}/rate`, { rating })
+      setAthleteReviews(prev => prev.map(r => r.id === reviewId ? updated : r))
+    } catch (err) {
+      console.error('Failed to rate review', err)
+    } finally {
+      setRatingLoading(null)
+    }
+  }
+
+  async function handleTrendFeedback() {
+    setTrendLoading(true)
+    setTrendError(null)
+    try {
+      const data = await api.get('/sessions/trend-feedback')
+      setTrendFeedback(data)
+    } catch (err) {
+      setTrendError(err.message)
+    } finally {
+      setTrendLoading(false)
     }
   }
 
@@ -54,11 +125,13 @@ export default function DashboardPage() {
         label: newLabel || null,
         sport: newSport,
         session_type: newType,
+        notes: newNotes || null,
       })
       setShowNewSession(false)
       setNewLabel('')
       setNewSport('boxing')
       setNewType('sparring')
+      setNewNotes('')
       await loadData()
     } catch (err) {
       console.error('Failed to create session', err)
@@ -68,6 +141,17 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
+    // Check for Stripe redirect params
+    const params = new URLSearchParams(window.location.search)
+    const payment = params.get('payment')
+    const subscription = params.get('subscription')
+    if (payment === 'success' || subscription === 'success') {
+      setPaymentBanner('success')
+      window.history.replaceState({}, '', '/dashboard')
+    } else if (payment === 'cancelled') {
+      setPaymentBanner('cancelled')
+      window.history.replaceState({}, '', '/dashboard')
+    }
     loadData()
   }, [])
 
@@ -78,14 +162,225 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gray-950 text-white">
       <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
         <span className="font-bold text-lg tracking-tight">Southpaw</span>
-        <UserButton />
+        <div className="flex items-center gap-4">
+          <button onClick={() => navigate('/coaches')} className="text-sm text-gray-400 hover:text-white transition-colors">
+            Find a coach
+          </button>
+          {currentUser?.user_type === 'coach' && (
+            <button onClick={() => navigate('/reviews/queue')} className="text-sm text-gray-400 hover:text-white transition-colors">
+              Review queue
+            </button>
+          )}
+          {currentUser?.is_admin && (
+            <button onClick={() => navigate('/admin')} className="text-sm text-amber-500 hover:text-amber-400 transition-colors">
+              Admin
+            </button>
+          )}
+          {currentUser && (
+            <div className="flex items-center gap-2">
+              {currentUser.subscription_tier !== 'free' && (
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                  currentUser.subscription_tier === 'elite'
+                    ? 'bg-yellow-900 text-yellow-400'
+                    : 'bg-indigo-900 text-indigo-400'
+                }`}>
+                  {currentUser.subscription_tier === 'elite' ? 'Elite' : 'Pro'}
+                </span>
+              )}
+              <button
+                onClick={() => setShowBuyCredits(true)}
+                className="flex items-center gap-1.5 text-sm px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-colors"
+              >
+                <span className="text-yellow-400">⚡</span>
+                {currentUser.credits_balance} credits
+              </button>
+            </div>
+          )}
+          <NotificationBell />
+          <UserButton />
+        </div>
       </nav>
 
+      {showBuyCredits && (
+        <BuyCreditsModal
+          onClose={() => setShowBuyCredits(false)}
+        />
+      )}
+
       <main className="max-w-4xl mx-auto px-6 py-12">
+        {paymentBanner && (
+          <div className={`mb-6 p-4 rounded-xl flex items-center justify-between ${
+            paymentBanner === 'success'
+              ? 'bg-green-950 border border-green-800'
+              : 'bg-gray-900 border border-gray-800'
+          }`}>
+            <p className={`text-sm font-medium ${paymentBanner === 'success' ? 'text-green-400' : 'text-gray-400'}`}>
+              {paymentBanner === 'success'
+                ? '✓ Payment successful — your credits have been added'
+                : 'Payment cancelled — no charge was made'}
+            </p>
+            <button onClick={() => setPaymentBanner(null)} className="text-gray-600 hover:text-white ml-4">×</button>
+          </div>
+        )}
+
         {loading ? (
           <p className="text-gray-500 text-sm">Loading...</p>
         ) : (
           <>
+            <StatsBar stats={stats} />
+
+            {/* ── Free tier upgrade prompt ── */}
+            {currentUser?.subscription_tier === 'free' && (
+              <div className="mb-6 p-4 bg-gray-900 border border-gray-800 rounded-xl flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white font-medium">You're on the Free plan</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    3 clips/month · Upgrade for unlimited clips, session feedback and more credits
+                  </p>
+                </div>
+                <button
+                  onClick={() => navigate('/pricing')}
+                  className="ml-6 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0"
+                >
+                  Upgrade
+                </button>
+              </div>
+            )}
+
+            {/* ── Coach profile prompt ── */}
+            {currentUser?.user_type === 'coach' && hasCoachProfile === false && (
+              <div className="mb-8 p-5 bg-indigo-950 border border-indigo-800 rounded-xl flex items-center justify-between">
+                <div>
+                  <p className="text-white font-medium text-sm">Set up your coach profile</p>
+                  <p className="text-indigo-300 text-xs mt-0.5">
+                    Add your bio, specializations, and credit rate to appear in the marketplace.
+                  </p>
+                </div>
+                <button
+                  onClick={() => navigate('/coach/profile')}
+                  className="ml-6 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0"
+                >
+                  Set up profile
+                </button>
+              </div>
+            )}
+
+            {/* ── Coach profile link (profile exists) ── */}
+            {currentUser?.user_type === 'coach' && hasCoachProfile === true && (
+              <div className="mb-8 flex justify-end">
+                <button
+                  onClick={() => navigate('/coach/profile')}
+                  className="text-sm text-gray-500 hover:text-white transition-colors"
+                >
+                  Edit coach profile →
+                </button>
+              </div>
+            )}
+
+            {/* ── Trend Feedback ── */}
+            {sessions.length >= 1 && (
+              <div className="mb-10 p-5 bg-gray-900 border border-gray-800 rounded-xl">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-white">Progress analysis</h2>
+                    <p className="text-xs text-gray-500 mt-0.5">AI coaching trends across your last sessions</p>
+                  </div>
+                  {sessions.length >= 2 && (
+                    <button
+                      onClick={handleTrendFeedback}
+                      disabled={trendLoading}
+                      className="text-sm px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg transition-colors"
+                    >
+                      {trendLoading ? 'Analysing...' : trendFeedback ? 'Refresh' : 'Analyse progress'}
+                    </button>
+                  )}
+                </div>
+
+                {sessions.length < 2 ? (
+                  <p className="text-sm text-gray-500">
+                    1 more session needed to unlock progress analysis.
+                  </p>
+                ) : trendError ? (
+                  <p className="text-red-400 text-sm">{trendError}</p>
+                ) : trendFeedback && !trendLoading ? (
+                  <div>
+                    <p className="text-xs text-gray-500 mb-3">
+                      Based on {trendFeedback.session_count} sessions
+                    </p>
+                    <div className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
+                      {trendFeedback.feedback}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">
+                    Click analyse to see how your training has progressed over time.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* ── Pending reviews ── */}
+            {athleteReviews.filter(r => r.status !== 'cancelled').length > 0 && (
+              <div className="mb-10">
+                <h2 className="text-xl font-semibold mb-4">Coach reviews</h2>
+                <div className="flex flex-col gap-3">
+                  {athleteReviews.filter(r => r.status !== 'cancelled').map(review => (
+                    <div key={review.id} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+                      <div
+                        onClick={() => review.clip_id && navigate(`/clips/${review.clip_id}`)}
+                        className={`flex items-center gap-4 p-4 transition-colors ${review.clip_id ? 'cursor-pointer hover:bg-gray-800/50' : ''}`}
+                      >
+                        <div className="w-14 h-10 rounded-lg bg-gray-800 flex-shrink-0 overflow-hidden">
+                          {review.clip_thumbnail_url
+                            ? <img src={review.clip_thumbnail_url} alt="" className="w-full h-full object-cover" />
+                            : <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">🎬</div>
+                          }
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-white truncate">{review.clip_filename || 'Clip'}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            {review.coach_display_name || 'Coach'} · {review.credits_cost} credits
+                          </p>
+                        </div>
+                        <span className={`text-xs px-2.5 py-1 rounded-full font-medium flex-shrink-0 ${
+                          review.status === 'complete' ? 'bg-green-900 text-green-400' :
+                          review.status === 'in_review' ? 'bg-blue-900 text-blue-400' :
+                          'bg-yellow-900 text-yellow-400'
+                        }`}>
+                          {review.status === 'complete' ? 'Complete' :
+                           review.status === 'in_review' ? 'In review' : 'Pending'}
+                        </span>
+                      </div>
+
+                      {/* Rating row — only for complete reviews */}
+                      {review.status === 'complete' && (
+                        <div className="px-4 pb-3 flex items-center gap-3 border-t border-gray-800/60 pt-3">
+                          {review.athlete_rating ? (
+                            <>
+                              <span className="text-xs text-gray-500">Your rating:</span>
+                              <StarRating value={review.athlete_rating} readonly size="sm" />
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-xs text-gray-500">Rate this review:</span>
+                              <StarRating
+                                value={null}
+                                size="sm"
+                                onChange={rating => handleRateReview(review.id, rating)}
+                              />
+                              {ratingLoading === review.id && (
+                                <span className="text-xs text-gray-500">Saving...</span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* ── Sessions ── */}
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-xl font-semibold">Your sessions</h2>
@@ -131,6 +426,16 @@ export default function DashboardPage() {
                   >
                     {SESSION_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                   </select>
+                </div>
+                <div className="flex flex-col gap-1 w-full">
+                  <label className="text-xs text-gray-500">Notes (optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Working on footwork and combinations"
+                    value={newNotes}
+                    onChange={e => setNewNotes(e.target.value)}
+                    className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg w-full"
+                  />
                 </div>
                 <button
                   type="submit"

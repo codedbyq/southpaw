@@ -18,6 +18,8 @@ class Clip(Base):
     session_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True
     )
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    head_movement_score: Mapped[float | None] = mapped_column(nullable=True)  # 0-1, higher = more active head movement
     feedback: Mapped[str | None] = mapped_column(String, nullable=True)
     thumbnail_s3_key: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
