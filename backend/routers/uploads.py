@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
@@ -11,6 +12,7 @@ from db.session import get_db
 from models.clip import Clip
 from models.job import Job
 from models.session import Session
+from models.user import User
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -25,6 +27,7 @@ class UploadInitRequest(BaseModel):
     duration_seconds: int | None = None
     sport: str = "boxing"
     session_id: str | None = None
+    notes: str | None = None
 
 
 class UploadInitResponse(BaseModel):
@@ -67,6 +70,24 @@ async def upload_init(
             detail=f"Clip exceeds maximum duration of {MAX_DURATION_SECONDS} seconds",
         )
 
+    # Enforce free tier clip limit (3 clips per month)
+    user_result = await db.execute(select(User).where(User.clerk_user_id == user_id))
+    user = user_result.scalar_one_or_none()
+    if user and user.subscription_tier == "free":
+        start_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        clip_count_result = await db.execute(
+            select(func.count(Clip.id)).where(
+                Clip.clerk_user_id == user_id,
+                Clip.created_at >= start_of_month,
+            )
+        )
+        clip_count = clip_count_result.scalar() or 0
+        if clip_count >= 3:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="Free tier limit reached — upgrade to Pro for unlimited clips",
+            )
+
     # Build a unique S3 key scoped to the user
     # raw/ prefix separates uploads from processed results
     s3_key = f"raw/{user_id}/{uuid.uuid4()}/{body.filename}"
@@ -80,6 +101,7 @@ async def upload_init(
         status="pending",
         sport=body.sport,
         session_id=uuid.UUID(body.session_id) if body.session_id else None,
+        notes=body.notes,
     )
     db.add(clip)
     await db.commit()

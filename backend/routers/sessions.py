@@ -12,7 +12,7 @@ from models.clip import Clip
 from models.job import Job
 from models.strike import Strike
 from routers.clips import _build_clip_response, ClipResponse
-from services.feedback import build_session_summary, compute_session_hash, generate_feedback, build_trend_summary, generate_trend_feedback
+from services.feedback import build_session_summary, compute_session_hash, generate_feedback, build_trend_summary, generate_trend_feedback, _aggregate_combos, _compute_fatigue_curve
 from models.user import User
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -23,6 +23,13 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 class SessionCreateRequest(BaseModel):
     label: str | None = None
     sport: str = "boxing"
+    session_type: str | None = None
+    notes: str | None = None
+
+
+class SessionUpdateRequest(BaseModel):
+    label: str | None = None
+    sport: str | None = None
     session_type: str | None = None
     notes: str | None = None
 
@@ -72,7 +79,7 @@ async def list_sessions(
 ):
     result = await db.execute(
         select(Session)
-        .where(Session.clerk_user_id == user_id)
+        .where(Session.clerk_user_id == user_id, Session.deleted_at == None)
         .order_by(Session.created_at.desc())
     )
     sessions = result.scalars().all()
@@ -98,8 +105,14 @@ async def get_trend_feedback(
 ):
     """
     Generate and cache trend feedback across the user's last 5 sessions.
-    Requires at least 2 sessions with processed strikes.
+    Requires at least 2 sessions with processed strikes. Requires Elite.
     """
+    # Gate behind Elite tier
+    current_user_result = await db.execute(select(User).where(User.clerk_user_id == clerk_user_id))
+    current_user = current_user_result.scalar_one_or_none()
+    if current_user and current_user.subscription_tier not in ("pro", "elite"):
+        raise HTTPException(status_code=402, detail="Trend feedback requires a Pro or Elite subscription")
+
     # Fetch last 5 sessions oldest → newest
     sessions_result = await db.execute(
         select(Session)
@@ -211,13 +224,52 @@ async def get_session(
     )
 
 
+@router.get("/{session_id}/analytics")
+async def get_session_analytics(
+    session_id: uuid.UUID,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return combo and fatigue curve analytics for a session."""
+    session = await _get_session_for_user(session_id, user_id, db)
+
+    clips_result = await db.execute(
+        select(Clip).where(Clip.session_id == session.id)
+    )
+    clips = clips_result.scalars().all()
+
+    strikes = []
+    if clips:
+        job_ids_result = await db.execute(
+            select(Job.id).where(Job.clip_id.in_([c.id for c in clips]))
+        )
+        job_ids = [r[0] for r in job_ids_result]
+        if job_ids:
+            strikes_result = await db.execute(
+                select(Strike).where(Strike.job_id.in_(job_ids))
+            )
+            strikes = strikes_result.scalars().all()
+
+    total_duration = sum(c.duration_seconds or 0 for c in clips)
+
+    return {
+        "combos": _aggregate_combos(strikes),
+        "fatigue_curve": _compute_fatigue_curve(strikes, total_duration),
+    }
+
+
 @router.get("/{session_id}/feedback")
 async def get_session_feedback(
     session_id: uuid.UUID,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return cached LLM feedback or generate fresh if dirty/missing."""
+    """Return cached LLM feedback or generate fresh if dirty/missing. Requires Pro+."""
+    current_user_result = await db.execute(select(User).where(User.clerk_user_id == user_id))
+    current_user = current_user_result.scalar_one_or_none()
+    if current_user and current_user.subscription_tier == "free":
+        raise HTTPException(status_code=402, detail="Session feedback requires a Pro or Elite subscription")
+
     session = await _get_session_for_user(session_id, user_id, db)
 
     clips_result = await db.execute(
@@ -285,6 +337,63 @@ async def create_session(
         session_type=session.session_type,
         created_at=session.created_at,
     )
+
+
+@router.patch("/{session_id}", response_model=SessionDetailResponse)
+async def update_session(
+    session_id: uuid.UUID,
+    body: SessionUpdateRequest,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update session label, sport, type, or notes."""
+    session = await _get_session_for_user(session_id, user_id, db)
+
+    if body.label is not None:
+        session.label = body.label
+    if body.sport is not None:
+        session.sport = body.sport
+    if body.session_type is not None:
+        session.session_type = body.session_type
+    if body.notes is not None:
+        session.notes = body.notes
+
+    # Changing notes marks feedback dirty
+    if body.notes is not None:
+        session.llm_summary_dirty = True
+
+    await db.commit()
+    await db.refresh(session)
+
+    clips_result = await db.execute(select(Clip).where(Clip.session_id == session.id))
+    clips = clips_result.scalars().all()
+    clip_responses = [await _build_clip_response(c, db) for c in clips]
+    metrics = _calculate_metrics(clips, [])
+
+    return SessionDetailResponse(
+        id=str(session.id),
+        label=session.label,
+        sport=session.sport,
+        session_type=session.session_type,
+        notes=session.notes,
+        created_at=session.created_at,
+        clips=clip_responses,
+        metrics=metrics,
+        llm_summary=session.llm_summary,
+        llm_summary_dirty=session.llm_summary_dirty,
+    )
+
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session(
+    session_id: uuid.UUID,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Soft delete a session — sets deleted_at, preserves all data."""
+    session = await _get_session_for_user(session_id, user_id, db)
+    session.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
 
 
 # --- Helpers ---

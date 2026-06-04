@@ -134,6 +134,9 @@ def process_clip(self, clip_id: str, job_id: str):
             db.commit()
             _publish_progress(job_id, "complete", 100, result_url=result_s3_key)
 
+            # Notify athlete clip is ready
+            _notify_clip_complete_sync(db, clip)
+
             logger.info(f"Job {job_id} complete — {len(strikes_data)} strikes detected")
 
         except Exception as exc:
@@ -147,6 +150,61 @@ def process_clip(self, clip_id: str, job_id: str):
             # Always clean up the temp file
             if 'tmp_path' in locals() and os.path.exists(tmp_path):
                 os.remove(tmp_path)
+
+
+@celery_app.task(bind=True, max_retries=2)
+def extract_coach_thumbnail(self, profile_id: str, intro_video_s3_key: str):
+    """
+    Lightweight task — extract a thumbnail from a coach intro video and store it.
+    No YOLO processing, just frame extraction.
+    """
+    logger.info(f"Extracting intro video thumbnail for coach profile {profile_id}")
+
+    try:
+        tmp_path = _download_clip(intro_video_s3_key)
+        thumb_key = f"coach-profiles/{profile_id}/intro_thumb.jpg"
+
+        cap = cv2.VideoCapture(tmp_path)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps))  # 1 second in
+        ret, frame = cap.read()
+        cap.release()
+
+        if not ret:
+            cap = cv2.VideoCapture(tmp_path)
+            ret, frame = cap.read()
+            cap.release()
+
+        if ret and frame is not None:
+            rotation = _get_video_rotation(tmp_path)
+            if rotation:
+                frame = _apply_rotation(frame, rotation)
+            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            s3.put_object(
+                Bucket=settings.S3_BUCKET_NAME,
+                Key=thumb_key,
+                Body=buf.tobytes(),
+                ContentType="image/jpeg",
+            )
+
+            with get_sync_session() as db:
+                from sqlalchemy import text
+                result = db.execute(
+                    text("UPDATE coach_profiles SET intro_video_thumb_s3_key = :key WHERE id = CAST(:id AS uuid)"),
+                    {"key": thumb_key, "id": profile_id}
+                )
+                db.commit()
+                if result.rowcount > 0:
+                    logger.info(f"Stored intro video thumbnail for profile {profile_id}")
+                else:
+                    logger.warning(f"No coach profile row found for id {profile_id}")
+
+    except Exception as exc:
+        logger.error(f"Coach thumbnail extraction failed: {exc}")
+        raise self.retry(exc=exc, countdown=10)
+    finally:
+        if 'tmp_path' in locals() and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 def _extract_and_upload_thumbnail(video_path: str, clip_id: str, user_id: str) -> str | None:
@@ -406,6 +464,36 @@ def _write_results_to_s3(s3_key: str, data: dict):
         Body=json.dumps(data),
         ContentType="application/json",
     )
+
+def _notify_clip_complete_sync(db, clip):
+    """Create a clip_processing_complete notification for the clip owner (sync, Celery)."""
+    try:
+        from sqlalchemy import select as sa_select
+        from models.user import User
+        from services.notifications import create_notification_sync
+
+        user = db.execute(
+            sa_select(User).where(User.clerk_user_id == clip.clerk_user_id)
+        ).scalar_one_or_none()
+
+        if user:
+            create_notification_sync(
+                db,
+                user_id=user.id,
+                type="clip_processing_complete",
+                title="Clip ready",
+                body=f'"{clip.filename}" has been analysed and is ready to view.',
+                reference_id=clip.id,
+                reference_type="clip",
+            )
+            db.commit()
+            logger.info(f"Created clip_processing_complete notification for user {user.id}")
+        else:
+            logger.warning(f"No user row found for clerk_user_id={clip.clerk_user_id} — skipping notification")
+    except Exception as e:
+        import traceback
+        logger.warning(f"Failed to create clip notification (non-fatal): {e}\n{traceback.format_exc()}")
+
 
 def _publish_progress(job_id: str, status: str, progress: int, result_url: str = None):
     """Publish a progress event to the Redis pub/sub channel for this job."""

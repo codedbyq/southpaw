@@ -1,6 +1,7 @@
 import uuid
 import logging
 from datetime import datetime
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -10,6 +11,8 @@ from dependencies import get_current_user
 from db.session import get_db
 from models.user import User
 from models.coach_profile import CoachProfile
+from core.s3 import generate_presigned_upload_url, generate_presigned_download_url
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,31 +29,56 @@ VALID_SPECIALIZATIONS = {
 class CoachProfileResponse(BaseModel):
     id: str
     user_id: str
+    display_name: str | None
     bio: str | None
     specializations: list[str]
     credit_rate: int | None
+    review_preference: str
     rating: float | None
     review_count: int
     is_featured: bool
     marketplace_visible: bool
     moderation_status: str
     moderation_notes: str | None
+    avatar_url: str | None
+    intro_video_url: str | None
+    intro_video_thumb_url: str | None
     created_at: datetime
 
     class Config:
         from_attributes = True
 
 
+class MediaUrlRequest(BaseModel):
+    media_type: Literal["avatar", "intro_video"]
+    filename: str
+    content_type: str
+
+
+class MediaUrlResponse(BaseModel):
+    upload_url: str
+    s3_key: str
+
+
+class MediaCompleteRequest(BaseModel):
+    media_type: Literal["avatar", "intro_video"]
+    s3_key: str
+
+
 class CoachProfileCreateRequest(BaseModel):
+    display_name: str | None = None
     bio: str | None = None
     specializations: list[str] = []
     credit_rate: int | None = None
+    review_preference: str = "either"
 
 
 class CoachProfileUpdateRequest(BaseModel):
+    display_name: str | None = None
     bio: str | None = None
     specializations: list[str] | None = None
     credit_rate: int | None = None
+    review_preference: str | None = None
 
 
 # --- Routes ---
@@ -83,9 +111,11 @@ async def create_my_coach_profile(
 
     profile = CoachProfile(
         user_id=user.id,
+        display_name=body.display_name,
         bio=body.bio,
         specializations=_clean_specializations(body.specializations),
         credit_rate=body.credit_rate,
+        review_preference=body.review_preference,
     )
     db.add(profile)
     await db.commit()
@@ -106,16 +136,79 @@ async def update_my_coach_profile(
     if not profile:
         raise HTTPException(status_code=404, detail="Coach profile not found — POST first")
 
+    if body.display_name is not None:
+        profile.display_name = body.display_name
     if body.bio is not None:
         profile.bio = body.bio
     if body.specializations is not None:
         profile.specializations = _clean_specializations(body.specializations)
     if body.credit_rate is not None:
         profile.credit_rate = body.credit_rate
+    if body.review_preference is not None:
+        if body.review_preference not in ("clip", "session", "either"):
+            raise HTTPException(status_code=400, detail="review_preference must be clip, session, or either")
+        profile.review_preference = body.review_preference
 
     await db.commit()
     await db.refresh(profile)
     return _build_response(profile)
+
+
+@router.post("/me/media-url", response_model=MediaUrlResponse)
+async def get_media_upload_url(
+    body: MediaUrlRequest,
+    clerk_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a presigned S3 URL for uploading coach avatar or intro video."""
+    user = await _require_coach(clerk_user_id, db)
+    profile = await _get_profile(user.id, db)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Coach profile not found — POST first")
+
+    allowed_image_types = {"image/jpeg", "image/png", "image/webp"}
+    allowed_video_types = {"video/mp4", "video/quicktime"}
+
+    if body.media_type == "avatar":
+        if body.content_type not in allowed_image_types:
+            raise HTTPException(status_code=400, detail="Avatar must be JPEG, PNG, or WebP")
+        ext = body.filename.rsplit(".", 1)[-1].lower() if "." in body.filename else "jpg"
+        s3_key = f"coach-profiles/{profile.id}/avatar.{ext}"
+    else:
+        if body.content_type not in allowed_video_types:
+            raise HTTPException(status_code=400, detail="Intro video must be MP4 or MOV")
+        ext = body.filename.rsplit(".", 1)[-1].lower() if "." in body.filename else "mp4"
+        s3_key = f"coach-profiles/{profile.id}/intro.{ext}"
+
+    upload_url = generate_presigned_upload_url(s3_key, body.content_type)
+    return MediaUrlResponse(upload_url=upload_url, s3_key=s3_key)
+
+
+@router.post("/me/media-url/complete")
+async def complete_media_upload(
+    body: MediaCompleteRequest,
+    clerk_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Confirm a media upload and store the S3 key on the coach profile.
+    For intro videos, queues thumbnail extraction.
+    """
+    user = await _require_coach(clerk_user_id, db)
+    profile = await _get_profile(user.id, db)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Coach profile not found")
+
+    if body.media_type == "avatar":
+        profile.avatar_s3_key = body.s3_key
+    else:
+        profile.intro_video_s3_key = body.s3_key
+        # Queue thumbnail extraction
+        from worker.tasks import extract_coach_thumbnail
+        extract_coach_thumbnail.delay(str(profile.id), body.s3_key)
+
+    await db.commit()
+    return {"status": "ok"}
 
 
 @router.get("", response_model=list[CoachProfileResponse])
@@ -136,6 +229,21 @@ async def list_coaches(
     )
     profiles = result.scalars().all()
     return [_build_response(p) for p in profiles]
+
+
+@router.get("/{profile_id}", response_model=CoachProfileResponse)
+async def get_coach_profile(
+    profile_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Public coach profile view."""
+    result = await db.execute(
+        select(CoachProfile).where(CoachProfile.id == profile_id)
+    )
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Coach not found")
+    return _build_response(profile)
 
 
 # --- Helpers ---
@@ -167,14 +275,19 @@ def _build_response(profile: CoachProfile) -> CoachProfileResponse:
     return CoachProfileResponse(
         id=str(profile.id),
         user_id=str(profile.user_id),
+        display_name=profile.display_name,
         bio=profile.bio,
         specializations=profile.specializations or [],
         credit_rate=profile.credit_rate,
+        review_preference=profile.review_preference or "either",
         rating=profile.rating,
         review_count=profile.review_count,
         is_featured=profile.is_featured,
         marketplace_visible=profile.marketplace_visible,
         moderation_status=profile.moderation_status,
         moderation_notes=profile.moderation_notes,
+        avatar_url=generate_presigned_download_url(profile.avatar_s3_key) if profile.avatar_s3_key else None,
+        intro_video_url=generate_presigned_download_url(profile.intro_video_s3_key) if profile.intro_video_s3_key else None,
+        intro_video_thumb_url=generate_presigned_download_url(profile.intro_video_thumb_s3_key) if profile.intro_video_thumb_s3_key else None,
         created_at=profile.created_at,
     )

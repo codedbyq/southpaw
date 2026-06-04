@@ -14,7 +14,7 @@ const STRIKE_COLORS = {
   rear_kick:       '#facc15',
 }
 
-export default function CanvasPlayer({ videoUrl, resultUrl }) {
+export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick }) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const keypointsRef = useRef(null)      // full frames array
@@ -244,36 +244,51 @@ export default function CanvasPlayer({ videoUrl, resultUrl }) {
           <p className="text-xs text-gray-500 uppercase tracking-wide">
             Strike timeline — click to jump
           </p>
-          <div
-            className="relative w-full h-8 bg-gray-900 rounded-lg overflow-hidden cursor-pointer"
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect()
-              const pct = (e.clientX - rect.left) / rect.width
-              seekTo(pct * duration)
-            }}
-          >
-            {/* Playhead */}
-            <div
-              className="absolute top-0 bottom-0 w-0.5 bg-white opacity-60 pointer-events-none"
-              style={{ left: `${(currentTime / duration) * 100}%` }}
-            />
-
-            {/* Strike markers */}
-            {filteredStrikes.map((strike, i) => (
+          <div className="relative w-full">
+            {/* Comment markers above the bar */}
+            {comments.filter(c => c.timestamp_seconds != null).map(c => (
               <div
-                key={i}
-                className="absolute top-1 bottom-1 w-1 rounded-sm cursor-pointer hover:opacity-100 opacity-80 transition-opacity"
-                style={{
-                  left: `${(strike.timestamp_seconds / duration) * 100}%`,
-                  backgroundColor: STRIKE_COLORS[strike.type] || '#ffffff',
-                }}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  seekTo(strike.timestamp_seconds)
-                }}
-                title={`${strike.type.replace('_', ' ')} at ${strike.timestamp_seconds.toFixed(1)}s`}
+                key={c.id}
+                className="absolute -top-2 w-2 h-2 rounded-full bg-yellow-400 border border-yellow-600 cursor-pointer hover:scale-125 transition-transform"
+                style={{ left: `calc(${(c.timestamp_seconds / duration) * 100}% - 4px)` }}
+                onClick={() => seekTo(c.timestamp_seconds)}
+                title={`${c.author_name}: ${c.body}`}
               />
             ))}
+
+            <div
+              className="relative w-full h-8 bg-gray-900 rounded-lg overflow-hidden cursor-pointer"
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect()
+                const pct = (e.clientX - rect.left) / rect.width
+                const t = pct * duration
+                seekTo(t)
+                if (onTimeClick) onTimeClick(t)
+              }}
+            >
+              {/* Playhead */}
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-white opacity-60 pointer-events-none"
+                style={{ left: `${(currentTime / duration) * 100}%` }}
+              />
+
+              {/* Strike markers */}
+              {filteredStrikes.map((strike, i) => (
+                <div
+                  key={i}
+                  className="absolute top-1 bottom-1 w-1 rounded-sm cursor-pointer hover:opacity-100 opacity-80 transition-opacity"
+                  style={{
+                    left: `${(strike.timestamp_seconds / duration) * 100}%`,
+                    backgroundColor: STRIKE_COLORS[strike.type] || '#ffffff',
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    seekTo(strike.timestamp_seconds)
+                  }}
+                  title={`${strike.type.replace('_', ' ')} at ${strike.timestamp_seconds.toFixed(1)}s`}
+                />
+              ))}
+            </div>
           </div>
         </div>
       )}

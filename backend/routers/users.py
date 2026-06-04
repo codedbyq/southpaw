@@ -25,6 +25,7 @@ class UserResponse(BaseModel):
     user_type: Literal["athlete", "coach"] | None  # null = onboarding not complete
     subscription_tier: Literal["free", "pro", "elite"]
     credits_balance: int
+    is_admin: bool
     trend_feedback: str | None
     trend_feedback_at: datetime | None
     created_at: datetime
@@ -50,6 +51,7 @@ async def get_me(
         user_type=user.user_type,
         subscription_tier=user.subscription_tier,
         credits_balance=user.credits_balance,
+        is_admin=user.is_admin,
         trend_feedback=user.trend_feedback,
         trend_feedback_at=user.trend_feedback_at,
         created_at=user.created_at,
@@ -73,6 +75,7 @@ async def update_me(
         user_type=user.user_type,
         subscription_tier=user.subscription_tier,
         credits_balance=user.credits_balance,
+        is_admin=user.is_admin,
         trend_feedback=user.trend_feedback,
         trend_feedback_at=user.trend_feedback_at,
         created_at=user.created_at,

@@ -22,3 +22,4 @@ class Session(Base):
     llm_summary_dirty: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     llm_summary_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     precomputed_summary_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

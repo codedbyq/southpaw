@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # LLM
     DEEPSEEK_API_KEY: str
 
+    # Stripe
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRO_PRICE_ID: str = ""
+    STRIPE_ELITE_PRICE_ID: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

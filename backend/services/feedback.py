@@ -50,6 +50,88 @@ SPORT_CONTEXT = {
 
 
 # ---------------------------------------------------------------------------
+# Combo detection
+# ---------------------------------------------------------------------------
+
+COMBO_WINDOW_SECONDS = 1.5
+MIN_COMBO_LENGTH = 2
+
+
+def _detect_combos(strikes) -> list[list]:
+    """Group strikes into combos — consecutive strikes within COMBO_WINDOW_SECONDS."""
+    if not strikes:
+        return []
+    sorted_strikes = sorted(strikes, key=lambda s: s.timestamp_seconds)
+    combos, current = [], [sorted_strikes[0]]
+    for strike in sorted_strikes[1:]:
+        if strike.timestamp_seconds - current[-1].timestamp_seconds <= COMBO_WINDOW_SECONDS:
+            current.append(strike)
+        else:
+            if len(current) >= MIN_COMBO_LENGTH:
+                combos.append(current)
+            current = [strike]
+    if len(current) >= MIN_COMBO_LENGTH:
+        combos.append(current)
+    return combos
+
+
+def _aggregate_combos(strikes) -> dict | None:
+    """Aggregate combo stats from a list of strikes."""
+    combos = _detect_combos(strikes)
+    if not combos:
+        return None
+
+    sequences: dict[tuple, int] = {}
+    guard_dropped_count = 0
+
+    for combo in combos:
+        seq = tuple(s.type for s in combo)
+        sequences[seq] = sequences.get(seq, 0) + 1
+        if any(s.guard_dropped for s in combo if s.guard_dropped is not None):
+            guard_dropped_count += 1
+
+    top = sorted(sequences.items(), key=lambda x: -x[1])[:3]
+
+    return {
+        "total_combos": len(combos),
+        "avg_length": round(sum(len(c) for c in combos) / len(combos), 1),
+        "guard_dropped_in_combo": guard_dropped_count,
+        "top_sequences": [
+            {"sequence": list(seq), "count": count}
+            for seq, count in top
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Fatigue curve
+# ---------------------------------------------------------------------------
+
+def _compute_fatigue_curve(strikes, total_duration_seconds: int) -> list[dict] | None:
+    """Split session into thirds and compute output + form metrics per third."""
+    if not strikes or not total_duration_seconds or total_duration_seconds < 30:
+        return None
+
+    third = total_duration_seconds / 3
+
+    def _third_stats(t_start, t_end):
+        s = [x for x in strikes if t_start <= x.timestamp_seconds < t_end]
+        ext = [x.arm_extension for x in s if x.arm_extension is not None]
+        duration_min = (t_end - t_start) / 60
+        return {
+            "strikes": len(s),
+            "strikes_per_minute": round(len(s) / duration_min, 1) if duration_min > 0 else None,
+            "avg_arm_extension": round(sum(ext) / len(ext), 3) if ext else None,
+        }
+
+    return [
+        {"third": 1, **_third_stats(0, third)},
+        {"third": 2, **_third_stats(third, third * 2)},
+        {"third": 3, **_third_stats(third * 2, total_duration_seconds)},
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Summary aggregation
 # ---------------------------------------------------------------------------
 
@@ -107,10 +189,13 @@ def build_clip_summary(clip, strikes) -> dict:
     return {
         "sport": clip.sport,
         "session_type": None,
+        "athlete_notes": getattr(clip, "notes", None),
         "duration_seconds": duration,
         "strikes_per_minute": (
             round(total_strikes / (duration / 60), 1) if duration > 0 else None
         ),
+        "combos": _aggregate_combos(strikes),
+        "fatigue_curve": _compute_fatigue_curve(strikes, duration),
         **agg,
     }
 
@@ -123,10 +208,13 @@ def build_session_summary(session, clips, strikes) -> dict:
     return {
         "sport": session.sport,
         "session_type": session.session_type,
+        "athlete_notes": getattr(session, "notes", None),
         "duration_seconds": total_duration,
         "strikes_per_minute": (
             round(total_strikes / (total_duration / 60), 1) if total_duration > 0 else None
         ),
+        "combos": _aggregate_combos(strikes),
+        "fatigue_curve": _compute_fatigue_curve(strikes, total_duration),
         **agg,
     }
 
@@ -155,10 +243,15 @@ Format your response exactly like this:
 - [specific observation referencing the data]
 - [specific observation referencing the data]
 
-Rules: reference actual numbers from the data. Keep total response under 200 words. \
+Rules: reference actual numbers from the data. If the athlete has provided a focus or context note, \
+tailor your feedback to that intent — e.g. if they said they were drilling hooks, evaluate hook \
+consistency rather than overall strike variety. Keep total response under 200 words. \
 No filler phrases like "great job" or "keep it up". Be a coach, not a cheerleader."""
 
     lines = [f"Sport: {sport_label}"]
+
+    if summary.get("athlete_notes"):
+        lines.append(f"Athlete's focus / context: {summary['athlete_notes']}")
 
     if summary["session_type"]:
         lines.append(f"Session type: {SESSION_TYPE_LABELS.get(summary['session_type'], summary['session_type'])}")
@@ -193,6 +286,28 @@ No filler phrases like "great job" or "keep it up". Be a coach, not a cheerleade
         for t, avg in sorted(ext["by_type"].items(), key=lambda x: -x[1]):
             label = t.replace("_", " ").title()
             lines.append(f"  {label}: {avg}")
+
+    combos = summary.get("combos")
+    if combos:
+        lines.append(f"\nCombos (strikes within {COMBO_WINDOW_SECONDS}s of each other):")
+        lines.append(f"  Total combos: {combos['total_combos']}, avg length: {combos['avg_length']} strikes")
+        lines.append(f"  Guard dropped during a combo: {combos['guard_dropped_in_combo']} times")
+        if combos["top_sequences"]:
+            lines.append("  Top sequences:")
+            for seq in combos["top_sequences"]:
+                labels = " → ".join(s.replace("_", " ") for s in seq["sequence"])
+                lines.append(f"    {labels} × {seq['count']}")
+
+    fatigue = summary.get("fatigue_curve")
+    if fatigue:
+        lines.append("\nFatigue curve (session split into thirds):")
+        for t in fatigue:
+            ext_str = f", avg extension {t['avg_arm_extension']}" if t["avg_arm_extension"] else ""
+            lines.append(
+                f"  Third {t['third']}: {t['strikes']} strikes"
+                + (f" ({t['strikes_per_minute']}/min)" if t["strikes_per_minute"] else "")
+                + ext_str
+            )
 
     return system, "\n".join(lines)
 
