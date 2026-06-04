@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { UserButton } from '@clerk/react'
 import { useApi } from '../api/client'
+import { ReviewCardSkeleton } from '../components/Skeleton'
 
 const STATUS_STYLES = {
   pending:   'bg-yellow-900 text-yellow-400',
@@ -147,7 +148,9 @@ export default function CoachReviewQueuePage() {
 
       <main className="max-w-3xl mx-auto px-6 py-10 space-y-10">
         {loading ? (
-          <p className="text-gray-500 text-sm">Loading...</p>
+          <div className="space-y-3">
+            {[...Array(3)].map((_, i) => <ReviewCardSkeleton key={i} />)}
+          </div>
         ) : reviews.length === 0 ? (
           <div className="text-center py-20">
             <p className="text-gray-400 text-sm">No review requests yet.</p>

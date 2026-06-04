@@ -253,6 +253,17 @@ async def complete_review(
     review.status = "complete"
     review.completed_at = datetime.now(timezone.utc)
 
+    # Update coach avg_response_hours
+    hours_taken = (review.completed_at - review.created_at).total_seconds() / 3600
+    if coach_profile.avg_response_hours is None:
+        coach_profile.avg_response_hours = round(hours_taken, 1)
+    else:
+        # Rolling average across all completed reviews
+        total_reviews = coach_profile.review_count or 1
+        coach_profile.avg_response_hours = round(
+            (coach_profile.avg_response_hours * (total_reviews - 1) + hours_taken) / total_reviews, 1
+        )
+
     # Notify athlete review is done
     await create_notification(
         db,
