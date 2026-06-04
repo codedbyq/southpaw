@@ -86,7 +86,14 @@ def process_clip(self, clip_id: str, job_id: str):
                 tmp_path, job_id, job, db
             )
 
-            # Step 4 — write keypoint JSON to S3
+            # Step 4 — compute head movement score from nose keypoint variance
+            head_score = _compute_head_movement(frames_data)
+            if head_score is not None:
+                clip.head_movement_score = head_score
+                db.commit()
+                logger.info(f"Head movement score for clip {clip_id}: {head_score}")
+
+            # Step 5 — write keypoint JSON to S3
             result_s3_key = f"processed/{clip.clerk_user_id}/{clip_id}/keypoints.json"
             _write_results_to_s3(result_s3_key, {
                 "clip_id": clip_id,
@@ -95,7 +102,7 @@ def process_clip(self, clip_id: str, job_id: str):
             })
             logger.info(f"Wrote keypoint JSON to S3: {result_s3_key}")
 
-            # Step 5 — write strike rows to Postgres
+            # Step 6 — write strike rows to Postgres
             for strike in strikes_data:
                 db.add(Strike(
                     job_id=job.id,
@@ -127,7 +134,7 @@ def process_clip(self, clip_id: str, job_id: str):
                     session.llm_summary_dirty = True
                     db.commit()
 
-            # Step 6 — mark job complete
+            # Step 7 — mark job complete
             job.status = "complete"
             job.progress = 100
             job.result_s3_key = result_s3_key
@@ -464,6 +471,37 @@ def _write_results_to_s3(s3_key: str, data: dict):
         Body=json.dumps(data),
         ContentType="application/json",
     )
+
+def _compute_head_movement(frames_data: list) -> float | None:
+    """
+    Compute head movement score from nose keypoint (index 0) variance across frames.
+    Returns a 0-1 score — higher means more active head movement.
+    Returns None if insufficient confident nose readings.
+    """
+    nose_xs = []
+    nose_ys = []
+
+    for frame in frames_data:
+        for skeleton in frame.get("skeletons", []):
+            kps = skeleton.get("keypoints", [])
+            if kps and kps[0]["visibility"] > MIN_KEYPOINT_CONF:
+                nose_xs.append(kps[0]["x"])
+                nose_ys.append(kps[0]["y"])
+                break  # only track primary subject (first skeleton)
+
+    if len(nose_xs) < 30:  # need at least 1 second of data at 30fps
+        return None
+
+    def _std(values):
+        mean = sum(values) / len(values)
+        variance = sum((v - mean) ** 2 for v in values) / len(values)
+        return variance ** 0.5
+
+    # Average std across x and y axes, capped at 0.15 (very large movement) then normalized 0-1
+    raw_score = (_std(nose_xs) + _std(nose_ys)) / 2
+    normalized = min(round(raw_score / 0.15, 3), 1.0)
+    return normalized
+
 
 def _notify_clip_complete_sync(db, clip):
     """Create a clip_processing_complete notification for the clip owner (sync, Celery)."""

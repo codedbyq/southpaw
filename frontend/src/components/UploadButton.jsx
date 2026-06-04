@@ -79,18 +79,49 @@ export default function UploadButton({ onUploadComplete }) {
         session_id = created.id
       }
 
-      const { clip_id, upload_url } = await api.post('/uploads/init', {
+      // Multipart upload — split into 10MB chunks
+      const CHUNK_SIZE = 10 * 1024 * 1024
+
+      const { clip_id, upload_id, s3_key, part_urls } = await api.post('/uploads/multipart/init', {
         filename: file.name,
         content_type: file.type,
+        file_size: file.size,
         sport,
         session_id,
         duration_seconds: durationSeconds,
         notes: clipNotes.trim() || null,
       })
 
-      await uploadToS3(file, upload_url, (pct) => setProgress(pct))
+      // Upload parts with max 3 concurrent
+      const parts = []
+      const concurrency = 3
+      let uploaded = 0
 
-      const { job_id } = await api.post('/uploads/complete', { clip_id })
+      async function uploadPart({ part_number, url }) {
+        const start = (part_number - 1) * CHUNK_SIZE
+        const chunk = file.slice(start, start + CHUNK_SIZE)
+        const res = await fetch(url, { method: 'PUT', body: chunk })
+        if (!res.ok) throw new Error(`Part ${part_number} failed`)
+        const etag = res.headers.get('ETag')
+        parts.push({ part_number, etag })
+        uploaded++
+        setProgress(Math.round((uploaded / part_urls.length) * 90))
+      }
+
+      // Process in batches of `concurrency`
+      for (let i = 0; i < part_urls.length; i += concurrency) {
+        await Promise.all(part_urls.slice(i, i + concurrency).map(uploadPart))
+      }
+
+      // Sort parts by part_number (required by S3)
+      parts.sort((a, b) => a.part_number - b.part_number)
+
+      const { job_id } = await api.post('/uploads/multipart/complete', {
+        clip_id,
+        upload_id,
+        s3_key,
+        parts,
+      })
 
       const token = await getToken()
       setState('processing')

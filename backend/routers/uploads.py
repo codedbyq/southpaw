@@ -5,7 +5,13 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
-from core.s3 import generate_presigned_upload_url
+from core.s3 import (
+    generate_presigned_upload_url,
+    create_multipart_upload,
+    generate_presigned_part_url,
+    complete_multipart_upload,
+    abort_multipart_upload,
+)
 from dependencies import get_current_user
 from worker.tasks import process_clip
 from db.session import get_db
@@ -171,3 +177,157 @@ async def upload_complete(
         clip_id=str(clip.id),
         job_id=str(job.id),
     )
+
+
+# --- Multipart upload ---
+
+MULTIPART_CHUNK_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+class MultipartInitRequest(BaseModel):
+    filename: str
+    content_type: str
+    file_size: int            # bytes — used to compute part count
+    duration_seconds: int | None = None
+    sport: str = "boxing"
+    session_id: str | None = None
+    notes: str | None = None
+
+
+class MultipartInitResponse(BaseModel):
+    clip_id: str
+    upload_id: str
+    s3_key: str
+    part_urls: list[dict]     # [{part_number, url}]
+
+
+class MultipartPart(BaseModel):
+    part_number: int
+    etag: str
+
+
+class MultipartCompleteRequest(BaseModel):
+    clip_id: str
+    upload_id: str
+    s3_key: str
+    parts: list[MultipartPart]  # collected ETags from each part upload
+
+
+@router.post("/multipart/init", response_model=MultipartInitResponse, status_code=status.HTTP_201_CREATED)
+async def multipart_init(
+    body: MultipartInitRequest,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Initiate a multipart S3 upload.
+    Returns presigned URLs for each part — frontend uploads parts in parallel.
+    """
+    if body.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                            detail=f"Unsupported file type")
+
+    if body.duration_seconds and body.duration_seconds > MAX_DURATION_SECONDS:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=f"Clip exceeds maximum duration of {MAX_DURATION_SECONDS} seconds")
+
+    # Free tier clip limit
+    user_result = await db.execute(select(User).where(User.clerk_user_id == user_id))
+    user = user_result.scalar_one_or_none()
+    if user and user.subscription_tier == "free":
+        start_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        clip_count_result = await db.execute(
+            select(func.count(Clip.id)).where(
+                Clip.clerk_user_id == user_id,
+                Clip.created_at >= start_of_month,
+            )
+        )
+        if (clip_count_result.scalar() or 0) >= 3:
+            raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                                detail="Free tier limit reached — upgrade to Pro for unlimited clips")
+
+    s3_key = f"raw/{user_id}/{uuid.uuid4()}/{body.filename}"
+
+    # Create clip row
+    clip = Clip(
+        clerk_user_id=user_id,
+        s3_key=s3_key,
+        filename=body.filename,
+        duration_seconds=body.duration_seconds,
+        status="pending",
+        sport=body.sport,
+        session_id=uuid.UUID(body.session_id) if body.session_id else None,
+        notes=body.notes,
+    )
+    db.add(clip)
+    await db.commit()
+    await db.refresh(clip)
+
+    if clip.session_id:
+        session_result = await db.execute(select(Session).where(Session.id == clip.session_id))
+        session = session_result.scalar_one_or_none()
+        if session:
+            session.llm_summary_dirty = True
+            await db.commit()
+
+    # Create multipart upload on S3
+    upload_id = create_multipart_upload(s3_key, body.content_type)
+
+    # Generate presigned URL for each part
+    import math
+    part_count = max(1, math.ceil(body.file_size / MULTIPART_CHUNK_SIZE))
+    part_urls = [
+        {"part_number": i + 1, "url": generate_presigned_part_url(s3_key, upload_id, i + 1)}
+        for i in range(part_count)
+    ]
+
+    return MultipartInitResponse(
+        clip_id=str(clip.id),
+        upload_id=upload_id,
+        s3_key=s3_key,
+        part_urls=part_urls,
+    )
+
+
+@router.post("/multipart/complete", response_model=UploadCompleteResponse)
+async def multipart_complete(
+    body: MultipartCompleteRequest,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Finalize the multipart upload, mark clip as uploaded, enqueue processing.
+    """
+    result = await db.execute(
+        select(Clip).where(Clip.id == body.clip_id, Clip.clerk_user_id == user_id)
+    )
+    clip = result.scalar_one_or_none()
+    if not clip:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip not found")
+
+    if clip.status != "pending":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Clip upload already {clip.status}")
+
+    # Complete the multipart upload on S3
+    try:
+        complete_multipart_upload(
+            body.s3_key,
+            body.upload_id,
+            [{"PartNumber": p.part_number, "ETag": p.etag} for p in body.parts],
+        )
+    except Exception as e:
+        abort_multipart_upload(body.s3_key, body.upload_id)
+        raise HTTPException(status_code=500, detail=f"Failed to complete upload: {e}")
+
+    clip.status = "uploaded"
+    await db.commit()
+
+    job = Job(clip_id=clip.id)
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    process_clip.delay(str(clip.id), str(job.id))
+
+    return UploadCompleteResponse(clip_id=str(clip.id), job_id=str(job.id))

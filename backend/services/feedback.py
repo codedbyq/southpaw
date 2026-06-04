@@ -194,6 +194,7 @@ def build_clip_summary(clip, strikes) -> dict:
         "strikes_per_minute": (
             round(total_strikes / (duration / 60), 1) if duration > 0 else None
         ),
+        "head_movement_score": getattr(clip, "head_movement_score", None),
         "combos": _aggregate_combos(strikes),
         "fatigue_curve": _compute_fatigue_curve(strikes, duration),
         **agg,
@@ -205,6 +206,11 @@ def build_session_summary(session, clips, strikes) -> dict:
     total_duration = sum(c.duration_seconds or 0 for c in clips)
     total_strikes = len(strikes)
     agg = _aggregate_strikes(strikes)
+
+    # Average head movement score across clips that have it
+    head_scores = [c.head_movement_score for c in clips if getattr(c, "head_movement_score", None) is not None]
+    avg_head_movement = round(sum(head_scores) / len(head_scores), 3) if head_scores else None
+
     return {
         "sport": session.sport,
         "session_type": session.session_type,
@@ -213,6 +219,7 @@ def build_session_summary(session, clips, strikes) -> dict:
         "strikes_per_minute": (
             round(total_strikes / (total_duration / 60), 1) if total_duration > 0 else None
         ),
+        "head_movement_score": avg_head_movement,
         "combos": _aggregate_combos(strikes),
         "fatigue_curve": _compute_fatigue_curve(strikes, total_duration),
         **agg,
@@ -286,6 +293,12 @@ No filler phrases like "great job" or "keep it up". Be a coach, not a cheerleade
         for t, avg in sorted(ext["by_type"].items(), key=lambda x: -x[1]):
             label = t.replace("_", " ").title()
             lines.append(f"  {label}: {avg}")
+
+    head_movement = summary.get("head_movement_score")
+    if head_movement is not None:
+        level = "high" if head_movement > 0.6 else "moderate" if head_movement > 0.3 else "low"
+        lines.append(f"\nHead movement score: {head_movement} / 1.0 ({level})")
+        lines.append("  (0 = stationary head, 1 = very active movement — slipping, bobbing, weaving)")
 
     combos = summary.get("combos")
     if combos:

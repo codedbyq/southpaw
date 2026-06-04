@@ -37,6 +37,7 @@ class ClipResponse(BaseModel):
     status: str
     sport: str
     notes: str | None
+    head_movement_score: float | None
     session_id: str | None
     feedback: str | None
     created_at: datetime
@@ -374,6 +375,7 @@ async def _build_clip_response(clip: Clip, db: AsyncSession) -> ClipResponse:
         status=clip.status,
         sport=clip.sport,
         notes=clip.notes,
+        head_movement_score=clip.head_movement_score,
         session_id=str(clip.session_id) if clip.session_id else None,
         feedback=clip.feedback,
         created_at=clip.created_at,

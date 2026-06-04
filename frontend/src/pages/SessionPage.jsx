@@ -253,7 +253,7 @@ export default function SessionPage() {
             </div>
 
             {/* Combo + Fatigue analytics */}
-            {analytics && (analytics.combos || analytics.fatigue_curve) && (
+            {analytics && (analytics.combos || analytics.fatigue_curve || analytics.head_movement_score != null) && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-10">
 
                 {/* Combos */}
@@ -318,6 +318,39 @@ export default function SessionPage() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {/* Head movement */}
+                {analytics.head_movement_score != null && (
+                  <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                    <h3 className="text-sm font-medium text-white mb-3">🎯 Head movement</h3>
+                    <div className="flex items-end gap-3 mb-3">
+                      <span className="text-3xl font-bold text-white">
+                        {Math.round(analytics.head_movement_score * 100)}
+                      </span>
+                      <span className="text-gray-500 text-sm mb-1">/ 100</span>
+                      <span className={`text-sm mb-1 font-medium ${
+                        analytics.head_movement_score > 0.6 ? 'text-green-400' :
+                        analytics.head_movement_score > 0.3 ? 'text-yellow-400' : 'text-red-400'
+                      }`}>
+                        {analytics.head_movement_score > 0.6 ? 'Active' :
+                         analytics.head_movement_score > 0.3 ? 'Moderate' : 'Low'}
+                      </span>
+                    </div>
+                    {/* Bar */}
+                    <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden mb-3">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          analytics.head_movement_score > 0.6 ? 'bg-green-500' :
+                          analytics.head_movement_score > 0.3 ? 'bg-yellow-500' : 'bg-red-500'
+                        }`}
+                        style={{ width: `${analytics.head_movement_score * 100}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      Measures nose position variance — slipping, bobbing and weaving relative to stance.
+                    </p>
                   </div>
                 )}
 

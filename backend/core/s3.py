@@ -41,3 +41,54 @@ def generate_presigned_download_url(s3_key: str, expires_in: int = 3600) -> str:
         },
         ExpiresIn=expires_in,
     )
+
+
+# --- Multipart upload helpers ---
+
+def create_multipart_upload(s3_key: str, content_type: str) -> str:
+    """Initiate a multipart upload and return the upload_id."""
+    response = s3_client.create_multipart_upload(
+        Bucket=settings.S3_BUCKET_NAME,
+        Key=s3_key,
+        ContentType=content_type,
+    )
+    return response["UploadId"]
+
+
+def generate_presigned_part_url(s3_key: str, upload_id: str, part_number: int, expiration: int = 3600) -> str:
+    """Generate a presigned URL for uploading a single part."""
+    return s3_client.generate_presigned_url(
+        "upload_part",
+        Params={
+            "Bucket": settings.S3_BUCKET_NAME,
+            "Key": s3_key,
+            "UploadId": upload_id,
+            "PartNumber": part_number,
+        },
+        ExpiresIn=expiration,
+    )
+
+
+def complete_multipart_upload(s3_key: str, upload_id: str, parts: list[dict]) -> None:
+    """
+    Finalize a multipart upload.
+    parts: [{"PartNumber": int, "ETag": str}, ...]
+    """
+    s3_client.complete_multipart_upload(
+        Bucket=settings.S3_BUCKET_NAME,
+        Key=s3_key,
+        UploadId=upload_id,
+        MultipartUpload={"Parts": parts},
+    )
+
+
+def abort_multipart_upload(s3_key: str, upload_id: str) -> None:
+    """Abort a multipart upload — frees partial S3 storage."""
+    try:
+        s3_client.abort_multipart_upload(
+            Bucket=settings.S3_BUCKET_NAME,
+            Key=s3_key,
+            UploadId=upload_id,
+        )
+    except Exception:
+        pass

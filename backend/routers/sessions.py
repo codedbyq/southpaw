@@ -252,9 +252,14 @@ async def get_session_analytics(
 
     total_duration = sum(c.duration_seconds or 0 for c in clips)
 
+    # Average head movement across clips
+    head_scores = [c.head_movement_score for c in clips if c.head_movement_score is not None]
+    avg_head_movement = round(sum(head_scores) / len(head_scores), 3) if head_scores else None
+
     return {
         "combos": _aggregate_combos(strikes),
         "fatigue_curve": _compute_fatigue_curve(strikes, total_duration),
+        "head_movement_score": avg_head_movement,
     }
 
 
