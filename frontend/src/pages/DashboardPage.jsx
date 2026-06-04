@@ -36,6 +36,15 @@ export default function DashboardPage() {
   const [athleteReviews, setAthleteReviews] = useState([])
   const [ratingLoading, setRatingLoading] = useState(null)
 
+  // Pagination
+  const PAGE_SIZE = 20
+  const [sessionOffset, setSessionOffset] = useState(0)
+  const [clipOffset, setClipOffset] = useState(0)
+  const [hasMoreSessions, setHasMoreSessions] = useState(false)
+  const [hasMoreClips, setHasMoreClips] = useState(false)
+  const [loadingMoreSessions, setLoadingMoreSessions] = useState(false)
+  const [loadingMoreClips, setLoadingMoreClips] = useState(false)
+
   // Bulk selection for unorganized clips
   const [selectedClipIds, setSelectedClipIds] = useState(new Set())
   const [bulkSessionId, setBulkSessionId] = useState('')
@@ -59,13 +68,17 @@ export default function DashboardPage() {
   async function loadData() {
     try {
       const [sessionsData, clipsData, userData, statsData] = await Promise.all([
-        api.get('/sessions'),
-        api.get('/clips'),
+        api.get(`/sessions?limit=${PAGE_SIZE}&offset=0`),
+        api.get(`/clips?limit=${PAGE_SIZE}&offset=0`),
         api.get('/users/me'),
         api.get('/users/me/stats'),
       ])
       setSessions(sessionsData)
       setClips(clipsData)
+      setSessionOffset(PAGE_SIZE)
+      setClipOffset(PAGE_SIZE)
+      setHasMoreSessions(sessionsData.length === PAGE_SIZE)
+      setHasMoreClips(clipsData.length === PAGE_SIZE)
       setStats(statsData)
       setCurrentUser(userData)
 
@@ -107,6 +120,34 @@ export default function DashboardPage() {
       console.error('Failed to rate review', err)
     } finally {
       setRatingLoading(null)
+    }
+  }
+
+  async function loadMoreSessions() {
+    setLoadingMoreSessions(true)
+    try {
+      const more = await api.get(`/sessions?limit=${PAGE_SIZE}&offset=${sessionOffset}`)
+      setSessions(prev => [...prev, ...more])
+      setSessionOffset(prev => prev + PAGE_SIZE)
+      setHasMoreSessions(more.length === PAGE_SIZE)
+    } catch (err) {
+      console.error('Failed to load more sessions', err)
+    } finally {
+      setLoadingMoreSessions(false)
+    }
+  }
+
+  async function loadMoreClips() {
+    setLoadingMoreClips(true)
+    try {
+      const more = await api.get(`/clips?limit=${PAGE_SIZE}&offset=${clipOffset}`)
+      setClips(prev => [...prev, ...more])
+      setClipOffset(prev => prev + PAGE_SIZE)
+      setHasMoreClips(more.length === PAGE_SIZE)
+    } catch (err) {
+      console.error('Failed to load more clips', err)
+    } finally {
+      setLoadingMoreClips(false)
     }
   }
 
@@ -555,11 +596,24 @@ export default function DashboardPage() {
             ) : filteredSessions.length === 0 ? (
               <p className="text-gray-500 text-sm mb-12">No sessions match "{search}".</p>
             ) : (
-              <div className="flex flex-col gap-4 mb-12">
-                {filteredSessions.map(session => (
-                  <SessionCard key={session.id} session={session} />
-                ))}
-              </div>
+              <>
+                <div className="flex flex-col gap-4 mb-4">
+                  {filteredSessions.map(session => (
+                    <SessionCard key={session.id} session={session} />
+                  ))}
+                </div>
+                {hasMoreSessions && !searchLower && (
+                  <div className="mb-8 text-center">
+                    <button
+                      onClick={loadMoreSessions}
+                      disabled={loadingMoreSessions}
+                      className="px-4 py-2 text-sm text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {loadingMoreSessions ? 'Loading...' : 'Load more sessions'}
+                    </button>
+                  </div>
+                )}
+              </>
             )}
 
             {/* ── Unorganized clips ── */}
@@ -639,18 +693,31 @@ export default function DashboardPage() {
             ) : filteredClips.length === 0 ? (
               <p className="text-gray-500 text-sm">No clips match "{search}".</p>
             ) : (
-              <div className="flex flex-col gap-3">
-                {filteredClips.map(clip => (
-                  <ClipCard
-                    key={clip.id}
-                    clip={clip}
-                    onDelete={loadData}
-                    selectable={unorganizedClips.length > 1}
-                    selected={selectedClipIds.has(clip.id)}
-                    onToggle={toggleClipSelect}
-                  />
-                ))}
-              </div>
+              <>
+                <div className="flex flex-col gap-3">
+                  {filteredClips.map(clip => (
+                    <ClipCard
+                      key={clip.id}
+                      clip={clip}
+                      onDelete={loadData}
+                      selectable={unorganizedClips.length > 1}
+                      selected={selectedClipIds.has(clip.id)}
+                      onToggle={toggleClipSelect}
+                    />
+                  ))}
+                </div>
+                {hasMoreClips && !searchLower && (
+                  <div className="mt-4 text-center">
+                    <button
+                      onClick={loadMoreClips}
+                      disabled={loadingMoreClips}
+                      className="px-4 py-2 text-sm text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {loadingMoreClips ? 'Loading...' : 'Load more clips'}
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}

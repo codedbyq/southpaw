@@ -42,7 +42,7 @@ async def list_notifications(
         select(Notification)
         .where(Notification.user_id == user.id)
         .order_by(Notification.read.asc(), Notification.created_at.desc())
-        .limit(30)
+        .limit(50)
     )
     notifications = result.scalars().all()
 

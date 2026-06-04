@@ -76,11 +76,15 @@ class SessionDetailResponse(BaseModel):
 async def list_sessions(
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    limit: int = 20,
+    offset: int = 0,
 ):
     result = await db.execute(
         select(Session)
         .where(Session.clerk_user_id == user_id, Session.deleted_at == None)
         .order_by(Session.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     sessions = result.scalars().all()
 

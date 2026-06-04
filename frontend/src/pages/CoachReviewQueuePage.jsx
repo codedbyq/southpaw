@@ -24,9 +24,13 @@ export default function CoachReviewQueuePage() {
   const [reviews, setReviews] = useState([])
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(null)
-  const [cancelModal, setCancelModal] = useState(null) // review object being cancelled
+  const [cancelModal, setCancelModal] = useState(null)
   const [cancelReason, setCancelReason] = useState('')
   const [cancelling, setCancelling] = useState(false)
+  const [offset, setOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const PAGE_SIZE = 20
 
   useEffect(() => {
     load()
@@ -34,12 +38,28 @@ export default function CoachReviewQueuePage() {
 
   async function load() {
     try {
-      const data = await api.get('/reviews/me/coach')
+      const data = await api.get(`/reviews/me/coach?limit=${PAGE_SIZE}&offset=0`)
       setReviews(data)
+      setOffset(PAGE_SIZE)
+      setHasMore(data.length === PAGE_SIZE)
     } catch (err) {
       console.error('Failed to load review queue', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadMore() {
+    setLoadingMore(true)
+    try {
+      const more = await api.get(`/reviews/me/coach?limit=${PAGE_SIZE}&offset=${offset}`)
+      setReviews(prev => [...prev, ...more])
+      setOffset(prev => prev + PAGE_SIZE)
+      setHasMore(more.length === PAGE_SIZE)
+    } catch (err) {
+      console.error('Failed to load more reviews', err)
+    } finally {
+      setLoadingMore(false)
     }
   }
 
@@ -157,7 +177,7 @@ export default function CoachReviewQueuePage() {
             <p className="text-gray-600 text-xs mt-1">When athletes request your review it will appear here.</p>
           </div>
         ) : (
-          <>
+          <div className="space-y-10">
             {/* Pending + In Review */}
             {[...pending, ...inReview].length > 0 && (
               <div>
@@ -197,7 +217,19 @@ export default function CoachReviewQueuePage() {
                 </div>
               </div>
             )}
-          </>
+
+            {hasMore && (
+              <div className="text-center">
+                <button
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="px-4 py-2 text-sm text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {loadingMore ? 'Loading...' : 'Load more reviews'}
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </main>
     </div>

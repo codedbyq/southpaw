@@ -167,14 +167,18 @@ async def request_review(
 async def list_athlete_reviews(
     clerk_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    limit: int = 20,
+    offset: int = 0,
 ):
-    """Return all review requests submitted by the current athlete."""
+    """Return review requests submitted by the current athlete. Paginated."""
     athlete = await _require_user(clerk_user_id, db)
 
     result = await db.execute(
         select(ClipReview)
         .where(ClipReview.athlete_id == athlete.id)
         .order_by(ClipReview.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     reviews = result.scalars().all()
     return [await _enrich_response(r, db) for r in reviews]
@@ -184,8 +188,10 @@ async def list_athlete_reviews(
 async def list_coach_reviews(
     clerk_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    limit: int = 20,
+    offset: int = 0,
 ):
-    """Return all review requests assigned to the current coach."""
+    """Return review requests assigned to the current coach. Paginated."""
     coach = await _require_user(clerk_user_id, db)
     if coach.user_type != "coach":
         raise HTTPException(status_code=403, detail="Coach access required")
@@ -194,6 +200,8 @@ async def list_coach_reviews(
         select(ClipReview)
         .where(ClipReview.coach_id == coach.id)
         .order_by(ClipReview.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     reviews = result.scalars().all()
     return [await _enrich_response(r, db) for r in reviews]
