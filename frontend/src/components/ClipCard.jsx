@@ -20,7 +20,7 @@ const STATUS_LABELS = {
   pending:    'Pending',
 }
 
-export default function ClipCard({ clip, onDelete }) {
+export default function ClipCard({ clip, onDelete, selectable = false, selected = false, onToggle }) {
   const api = useApi()
   const navigate = useNavigate()
   const [deleting, setDeleting] = useState(false)
@@ -41,8 +41,24 @@ export default function ClipCard({ clip, onDelete }) {
   }
 
   return (
-    <div className="flex items-center justify-between p-4 bg-gray-900 rounded-xl border border-gray-800">
+    <div
+      className={`flex items-center justify-between p-4 bg-gray-900 rounded-xl border transition-colors ${
+        selected ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800'
+      }`}
+      onClick={selectable ? () => onToggle?.(clip.id) : undefined}
+      style={selectable ? { cursor: 'pointer' } : undefined}
+    >
       <div className="flex items-center gap-4">
+        {/* Checkbox */}
+        {selectable && (
+          <div
+            className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center ${
+              selected ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600'
+            }`}
+          >
+            {selected && <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 12 12"><path d="M10 3L5 8.5 2 5.5l-1 1L5 10.5l6-7-1-0.5z"/></svg>}
+          </div>
+        )}
         {/* Thumbnail */}
         <div className="w-16 h-12 bg-gray-800 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
           {clip.thumbnail_url ? (
@@ -71,7 +87,7 @@ export default function ClipCard({ clip, onDelete }) {
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
         {/* Status badge */}
         <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${STATUS_STYLES[jobStatus] || STATUS_STYLES.pending}`}>
           {STATUS_LABELS[jobStatus] || jobStatus}
@@ -87,14 +103,16 @@ export default function ClipCard({ clip, onDelete }) {
           </button>
         )}
 
-        {/* Delete button */}
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded-lg transition-colors disabled:opacity-50"
-        >
-          {deleting ? 'Deleting...' : 'Delete'}
-        </button>
+        {/* Delete button — hidden in select mode */}
+        {!selectable && (
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded-lg transition-colors disabled:opacity-50"
+          >
+            {deleting ? 'Deleting...' : 'Delete'}
+          </button>
+        )}
       </div>
     </div>
   )

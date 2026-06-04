@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useApi } from '../api/client'
 import CanvasPlayer from '../components/CanvasPlayer'
+import { PlayerSkeleton } from '../components/Skeleton'
 
 export default function CoachReviewPlayerPage() {
   const { reviewId } = useParams()
@@ -86,8 +87,12 @@ export default function CoachReviewPlayerPage() {
   }
 
   if (loading) return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-      <p className="text-gray-400 text-sm">Loading...</p>
+    <div className="min-h-screen bg-gray-950">
+      <nav className="flex items-center gap-4 px-6 py-4 border-b border-gray-800">
+        <div className="w-28 h-4 bg-gray-800 animate-pulse rounded" />
+        <div className="flex-1 h-4 bg-gray-800 animate-pulse rounded max-w-xs" />
+      </nav>
+      <main className="max-w-5xl mx-auto px-6 py-8"><PlayerSkeleton /></main>
     </div>
   )
 

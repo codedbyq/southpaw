@@ -4,6 +4,7 @@ import { UserButton } from '@clerk/react'
 import { useApi } from '../api/client'
 import ClipCard from '../components/ClipCard'
 import NotificationBell from '../components/NotificationBell'
+import { SessionDetailSkeleton } from '../components/Skeleton'
 
 const SPORT_LABELS = {
   boxing:    'Boxing',
@@ -87,7 +88,12 @@ export default function SessionPage() {
   }
 
   async function handleDelete() {
-    if (!confirm('Delete this session? The session data will be archived and clips will remain accessible.')) return
+    // Fetch clip count first for informative confirmation
+    const { clip_count } = await api.get(`/sessions/${sessionId}/clip-count`).catch(() => ({ clip_count: 0 }))
+    const clipMsg = clip_count > 0
+      ? `${clip_count} clip${clip_count !== 1 ? 's' : ''} will be moved to your unorganized clips.`
+      : 'This session has no clips.'
+    if (!confirm(`Delete this session?\n\n${clipMsg}\n\nSession analytics and feedback will be archived.`)) return
     setDeleting(true)
     try {
       await api.delete(`/sessions/${sessionId}`)
@@ -140,7 +146,7 @@ export default function SessionPage() {
 
       <main className="max-w-4xl mx-auto px-6 py-12">
         {loading && (
-          <p className="text-gray-500 text-sm">Loading session...</p>
+          <SessionDetailSkeleton />
         )}
 
         {notFound && (
@@ -361,7 +367,11 @@ export default function SessionPage() {
             <div className="mb-10">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold">Coaching feedback</h2>
-                {(!feedback || feedbackDirty) && (
+                {session.clips.length < 2 ? (
+                  <span className="text-xs text-gray-500 italic">
+                    Add at least 2 clips to unlock session feedback
+                  </span>
+                ) : (!feedback || feedbackDirty) && (
                   <button
                     onClick={fetchFeedback}
                     disabled={feedbackLoading}
@@ -416,7 +426,10 @@ export default function SessionPage() {
             </div>
 
             {session.clips.length === 0 ? (
-              <p className="text-gray-500 text-sm">No clips in this session yet.</p>
+              <div className="text-center py-10 border border-dashed border-gray-800 rounded-xl">
+                <p className="text-gray-500 text-sm mb-1">No clips in this session yet.</p>
+                <p className="text-gray-600 text-xs">Upload a clip and assign it to this session to get started.</p>
+              </div>
             ) : (
               <div className="flex flex-col gap-4">
                 {session.clips.map(clip => (

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { UserButton } from '@clerk/react'
 import { useApi } from '../api/client'
+import { CoachProfileSkeleton } from '../components/Skeleton'
 
 const SPECIALIZATION_OPTIONS = [
   { value: 'boxing',     label: 'Boxing' },
@@ -197,7 +198,7 @@ export default function CoachProfilePage() {
 
       <main className="max-w-2xl mx-auto px-6 py-12">
         {loading ? (
-          <p className="text-gray-500 text-sm">Loading...</p>
+          <CoachProfileSkeleton />
         ) : (
           <form onSubmit={handleSave} className="space-y-8">
 

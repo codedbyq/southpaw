@@ -53,6 +53,7 @@ class ClipResponse(BaseModel):
 class ClipUpdateRequest(BaseModel):
     filename: str | None = None
     notes: str | None = None
+    session_id: str | None = None  # uuid string to move to session, empty string to unorganize
 
 # --- Routes ---
 
@@ -291,6 +292,31 @@ async def update_clip(
         clip.filename = body.filename.strip()
     if body.notes is not None:
         clip.notes = body.notes.strip() or None
+
+    if body.session_id is not None:
+        old_session_id = clip.session_id
+
+        # Resolve new session — empty string means unorganize
+        if body.session_id == "":
+            clip.session_id = None
+        else:
+            new_session_result = await db.execute(
+                select(Session).where(
+                    Session.id == uuid.UUID(body.session_id),
+                    Session.clerk_user_id == clerk_user_id,
+                )
+            )
+            new_session = new_session_result.scalar_one_or_none()
+            if not new_session:
+                raise HTTPException(status_code=404, detail="Session not found")
+            clip.session_id = new_session.id
+
+        # Mark both old and new sessions dirty
+        for sid in filter(None, [old_session_id, clip.session_id]):
+            s_result = await db.execute(select(Session).where(Session.id == sid))
+            s = s_result.scalar_one_or_none()
+            if s:
+                s.llm_summary_dirty = True
 
     await db.commit()
     return await _build_clip_response(clip, db)

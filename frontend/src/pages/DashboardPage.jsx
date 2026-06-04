@@ -6,6 +6,7 @@ import UploadButton from '../components/UploadButton'
 import ClipCard from '../components/ClipCard'
 import SessionCard from '../components/SessionCard'
 import StatsBar from '../components/StatsBar'
+import { StatsBarSkeleton, SessionCardSkeleton, ClipCardSkeleton } from '../components/Skeleton'
 import BuyCreditsModal from '../components/BuyCreditsModal'
 import NotificationBell from '../components/NotificationBell'
 import StarRating from '../components/StarRating'
@@ -34,6 +35,11 @@ export default function DashboardPage() {
   const [hasCoachProfile, setHasCoachProfile] = useState(null)
   const [athleteReviews, setAthleteReviews] = useState([])
   const [ratingLoading, setRatingLoading] = useState(null)
+
+  // Bulk selection for unorganized clips
+  const [selectedClipIds, setSelectedClipIds] = useState(new Set())
+  const [bulkSessionId, setBulkSessionId] = useState('')
+  const [bulkLoading, setBulkLoading] = useState(false)
   const [showBuyCredits, setShowBuyCredits] = useState(false)
   const [paymentBanner, setPaymentBanner] = useState(null) // 'success' | 'cancelled'
 
@@ -104,6 +110,54 @@ export default function DashboardPage() {
     }
   }
 
+  function toggleClipSelect(clipId) {
+    setSelectedClipIds(prev => {
+      const next = new Set(prev)
+      next.has(clipId) ? next.delete(clipId) : next.add(clipId)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    if (selectedClipIds.size === unorganizedClips.length) {
+      setSelectedClipIds(new Set())
+    } else {
+      setSelectedClipIds(new Set(unorganizedClips.map(c => c.id)))
+    }
+  }
+
+  async function handleBulkAssign() {
+    if (!bulkSessionId || !selectedClipIds.size) return
+    setBulkLoading(true)
+    try {
+      await Promise.all(
+        [...selectedClipIds].map(id => api.patch(`/clips/${id}`, { session_id: bulkSessionId }))
+      )
+      setSelectedClipIds(new Set())
+      setBulkSessionId('')
+      await loadData()
+    } catch (err) {
+      console.error('Bulk assign failed', err)
+    } finally {
+      setBulkLoading(false)
+    }
+  }
+
+  async function handleBulkDelete() {
+    if (!selectedClipIds.size) return
+    if (!confirm(`Delete ${selectedClipIds.size} clip${selectedClipIds.size !== 1 ? 's' : ''}? This cannot be undone.`)) return
+    setBulkLoading(true)
+    try {
+      await Promise.all([...selectedClipIds].map(id => api.delete(`/clips/${id}`)))
+      setSelectedClipIds(new Set())
+      await loadData()
+    } catch (err) {
+      console.error('Bulk delete failed', err)
+    } finally {
+      setBulkLoading(false)
+    }
+  }
+
   async function handleTrendFeedback() {
     setTrendLoading(true)
     setTrendError(null)
@@ -156,7 +210,22 @@ export default function DashboardPage() {
   }, [])
 
   // Clips not yet assigned to a session
+  const [search, setSearch] = useState('')
+  const searchLower = search.toLowerCase()
+
   const unorganizedClips = clips.filter(c => !c.session_id)
+
+  const filteredSessions = searchLower
+    ? sessions.filter(s =>
+        (s.label || '').toLowerCase().includes(searchLower) ||
+        (s.sport || '').toLowerCase().includes(searchLower) ||
+        (s.session_type || '').toLowerCase().includes(searchLower)
+      )
+    : sessions
+
+  const filteredClips = searchLower
+    ? unorganizedClips.filter(c => c.filename.toLowerCase().includes(searchLower))
+    : unorganizedClips
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
@@ -224,7 +293,15 @@ export default function DashboardPage() {
         )}
 
         {loading ? (
-          <p className="text-gray-500 text-sm">Loading...</p>
+          <div className="space-y-6">
+            <StatsBarSkeleton />
+            <div className="space-y-3">
+              {[...Array(3)].map((_, i) => <SessionCardSkeleton key={i} />)}
+            </div>
+            <div className="space-y-3 mt-8">
+              {[...Array(2)].map((_, i) => <ClipCardSkeleton key={i} />)}
+            </div>
+          </div>
         ) : (
           <>
             <StatsBar stats={stats} />
@@ -381,6 +458,30 @@ export default function DashboardPage() {
               </div>
             )}
 
+            {/* ── Search ── */}
+            {(sessions.length > 3 || unorganizedClips.length > 3) && (
+              <div className="relative mb-6">
+                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search sessions and clips..."
+                  className="w-full pl-9 pr-4 py-2.5 bg-gray-900 border border-gray-800 rounded-xl text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                />
+                {search && (
+                  <button
+                    onClick={() => setSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* ── Sessions ── */}
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-xl font-semibold">Your sessions</h2>
@@ -451,16 +552,18 @@ export default function DashboardPage() {
               <p className="text-gray-500 text-sm mb-12">
                 No sessions yet. Create one above or tag a clip to a session during upload.
               </p>
+            ) : filteredSessions.length === 0 ? (
+              <p className="text-gray-500 text-sm mb-12">No sessions match "{search}".</p>
             ) : (
               <div className="flex flex-col gap-4 mb-12">
-                {sessions.map(session => (
+                {filteredSessions.map(session => (
                   <SessionCard key={session.id} session={session} />
                 ))}
               </div>
             )}
 
             {/* ── Unorganized clips ── */}
-            <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center justify-between mb-3">
               <h2 className="text-xl font-semibold">
                 Unorganized clips
                 {unorganizedClips.length > 0 && (
@@ -472,16 +575,80 @@ export default function DashboardPage() {
               <UploadButton onUploadComplete={loadData} />
             </div>
 
+            {/* Select all row */}
+            {unorganizedClips.length > 1 && (
+              <div className="flex items-center gap-3 mb-3">
+                <button
+                  onClick={toggleSelectAll}
+                  className="text-xs text-gray-500 hover:text-white transition-colors"
+                >
+                  {selectedClipIds.size === unorganizedClips.length ? 'Deselect all' : 'Select all'}
+                </button>
+                {selectedClipIds.size > 0 && (
+                  <span className="text-xs text-gray-600">
+                    {selectedClipIds.size} selected
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Bulk action bar */}
+            {selectedClipIds.size > 0 && (
+              <div className="flex items-center gap-3 mb-4 p-3 bg-gray-900 border border-gray-700 rounded-xl">
+                <select
+                  value={bulkSessionId}
+                  onChange={e => setBulkSessionId(e.target.value)}
+                  className="flex-1 px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg focus:outline-none"
+                >
+                  <option value="">Assign to session...</option>
+                  {sessions.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.label || `${s.session_type || 'Session'}`}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleBulkAssign}
+                  disabled={!bulkSessionId || bulkLoading}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-colors"
+                >
+                  {bulkLoading ? 'Moving...' : 'Assign'}
+                </button>
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={bulkLoading}
+                  className="px-3 py-1.5 bg-red-900 hover:bg-red-800 disabled:opacity-40 text-red-300 text-xs font-medium rounded-lg transition-colors"
+                >
+                  Delete {selectedClipIds.size}
+                </button>
+                <button
+                  onClick={() => setSelectedClipIds(new Set())}
+                  className="text-xs text-gray-500 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+
             {unorganizedClips.length === 0 ? (
               <p className="text-gray-500 text-sm">
                 {clips.length === 0
                   ? 'No clips yet. Upload your first clip to get started.'
                   : 'All clips are assigned to sessions.'}
               </p>
+            ) : filteredClips.length === 0 ? (
+              <p className="text-gray-500 text-sm">No clips match "{search}".</p>
             ) : (
-              <div className="flex flex-col gap-4">
-                {unorganizedClips.map(clip => (
-                  <ClipCard key={clip.id} clip={clip} onDelete={loadData} />
+              <div className="flex flex-col gap-3">
+                {filteredClips.map(clip => (
+                  <ClipCard
+                    key={clip.id}
+                    clip={clip}
+                    onDelete={loadData}
+                    selectable={unorganizedClips.length > 1}
+                    selected={selectedClipIds.has(clip.id)}
+                    onToggle={toggleClipSelect}
+                  />
                 ))}
               </div>
             )}

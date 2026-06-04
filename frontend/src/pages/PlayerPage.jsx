@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useApi } from '../api/client'
 import CanvasPlayer from '../components/CanvasPlayer'
 import NotificationBell from '../components/NotificationBell'
+import { PlayerSkeleton } from '../components/Skeleton'
 
 export default function PlayerPage() {
   const { clipId } = useParams()
@@ -25,15 +26,23 @@ export default function PlayerPage() {
   const [notesValue, setNotesValue] = useState('')
   const [savingNotes, setSavingNotes] = useState(false)
 
+  // Move clip to session
+  const [sessions, setSessions] = useState([])
+  const [movingSession, setMovingSession] = useState(false)
+  const [selectedSession, setSelectedSession] = useState('')
+
   useEffect(() => {
     async function loadClip() {
       try {
-        const [clipData, commentsData] = await Promise.all([
+        const [clipData, commentsData, sessionsData] = await Promise.all([
           api.get(`/clips/${clipId}`),
           api.get(`/clips/${clipId}/comments`),
+          api.get('/sessions'),
         ])
         setClip(clipData)
         setComments(commentsData)
+        setSessions(Array.isArray(sessionsData) ? sessionsData : [])
+        setSelectedSession(clipData.session_id || '')
       } catch (err) {
         setError('Failed to load clip')
       } finally {
@@ -42,6 +51,21 @@ export default function PlayerPage() {
     }
     loadClip()
   }, [clipId])
+
+  async function handleMoveSession(newSessionId) {
+    setMovingSession(true)
+    try {
+      const updated = await api.patch(`/clips/${clipId}`, {
+        session_id: newSessionId || '',  // empty string = unorganize
+      })
+      setClip(updated)
+      setSelectedSession(updated.session_id || '')
+    } catch (err) {
+      console.error('Failed to move clip', err)
+    } finally {
+      setMovingSession(false)
+    }
+  }
 
   async function handleSaveNotes() {
     setSavingNotes(true)
@@ -90,8 +114,14 @@ export default function PlayerPage() {
   }
 
   if (loading) return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-      <p className="text-gray-400 text-sm">Loading...</p>
+    <div className="min-h-screen bg-gray-950">
+      <nav className="flex items-center gap-4 px-6 py-4 border-b border-gray-800">
+        <div className="w-12 h-4 bg-gray-800 animate-pulse rounded" />
+        <div className="flex-1 h-4 bg-gray-800 animate-pulse rounded max-w-xs" />
+      </nav>
+      <main className="max-w-5xl mx-auto px-6 py-8">
+        <PlayerSkeleton />
+      </main>
     </div>
   )
 
@@ -110,13 +140,27 @@ export default function PlayerPage() {
       <nav className="flex items-center gap-4 px-6 py-4 border-b border-gray-800">
         <button
           onClick={() => navigate(-1)}
-          className="text-gray-400 hover:text-white transition-colors text-sm"
+          className="text-gray-400 hover:text-white transition-colors text-sm flex-shrink-0"
         >
           ← Back
         </button>
-        <span className="font-medium text-sm text-gray-300 truncate flex-1">
-          {clip.filename}
-        </span>
+        <div className="flex-1 min-w-0 flex items-center gap-3">
+          <span className="font-medium text-sm text-gray-300 truncate">{clip.filename}</span>
+          {/* Session picker */}
+          <select
+            value={selectedSession}
+            onChange={e => handleMoveSession(e.target.value)}
+            disabled={movingSession}
+            className="text-xs px-2.5 py-1 bg-gray-800 border border-gray-700 text-gray-400 rounded-lg focus:outline-none focus:border-indigo-500 disabled:opacity-50 max-w-[200px] truncate"
+          >
+            <option value="">Unorganized</option>
+            {sessions.filter(s => s.sport === clip.sport).map(s => (
+              <option key={s.id} value={s.id}>
+                {s.label || `${s.session_type || 'Session'}`}
+              </option>
+            ))}
+          </select>
+        </div>
         <NotificationBell />
       </nav>
 
@@ -208,6 +252,13 @@ export default function PlayerPage() {
             </div>
           </form>
         </div>
+
+        {/* Empty comments state */}
+        {comments.length === 0 && (
+          <div className="text-center py-6 text-gray-600 text-sm">
+            No comments yet — click the timeline to pin feedback to a moment, or type a general note above.
+          </div>
+        )}
 
         {/* Timestamped comments */}
         {timestampedComments.length > 0 && (

@@ -285,6 +285,12 @@ async def get_session_feedback(
     if not clips:
         raise HTTPException(status_code=400, detail="No clips in this session yet")
 
+    if len(clips) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Session feedback requires at least 2 clips — single clip sessions already have clip-level feedback"
+        )
+
     job_ids_result = await db.execute(
         select(Job.id).where(Job.clip_id.in_([c.id for c in clips]))
     )
@@ -389,14 +395,39 @@ async def update_session(
     )
 
 
+@router.get("/{session_id}/clip-count")
+async def get_session_clip_count(
+    session_id: uuid.UUID,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return clip count for delete confirmation prompt."""
+    session = await _get_session_for_user(session_id, user_id, db)
+    result = await db.execute(
+        select(func.count(Clip.id)).where(Clip.session_id == session.id)
+    )
+    return {"clip_count": result.scalar() or 0}
+
+
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(
     session_id: uuid.UUID,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Soft delete a session — sets deleted_at, preserves all data."""
+    """
+    Soft delete a session — sets deleted_at, moves all clips to unorganized
+    (session_id = null) so they remain accessible on the dashboard.
+    """
     session = await _get_session_for_user(session_id, user_id, db)
+
+    # Unorganize all clips belonging to this session
+    clips_result = await db.execute(
+        select(Clip).where(Clip.session_id == session.id)
+    )
+    for clip in clips_result.scalars().all():
+        clip.session_id = None
+
     session.deleted_at = datetime.now(timezone.utc)
     await db.commit()
 

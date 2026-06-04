@@ -4,6 +4,29 @@ import { useNavigate } from 'react-router-dom'
 import { useApi } from '../api/client'
 
 const ACCEPTED_TYPES = ['video/mp4', 'video/quicktime', 'video/x-msvideo']
+const CHUNK_SIZE = 10 * 1024 * 1024  // 10MB
+const CONCURRENCY = 3
+const MAX_PART_RETRIES = 3
+
+// Upload a single part with exponential backoff retries
+async function uploadPartWithRetry(file, part_number, url, maxRetries = MAX_PART_RETRIES) {
+  let lastErr
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const start = (part_number - 1) * CHUNK_SIZE
+      const chunk = file.slice(start, start + CHUNK_SIZE)
+      const res = await fetch(url, { method: 'PUT', body: chunk })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return res.headers.get('ETag')
+    } catch (err) {
+      lastErr = err
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 500 * attempt)) // 0.5s, 1s, 1.5s
+      }
+    }
+  }
+  throw new Error(`Part ${part_number} failed after ${maxRetries} attempts: ${lastErr.message}`)
+}
 
 const SPORTS = [
   { value: 'boxing',    label: 'Boxing' },
@@ -24,51 +47,195 @@ export default function UploadButton({ onUploadComplete }) {
   const navigate = useNavigate()
   const fileInputRef = useRef(null)
 
-  const [state, setState] = useState('idle')  // idle | selecting | uploading | processing | error
-  const [progress, setProgress] = useState(0)
+  // Core state
+  const [state, setState] = useState('idle')  // idle | selecting | uploading | error
+  const [files, setFiles] = useState([])       // File objects
   const [error, setError] = useState(null)
-  const [file, setFile] = useState(null)
-  const [autoNavigate, setAutoNavigate] = useState(true)
-  const [clipNotes, setClipNotes] = useState('')
 
+  // Per-file upload status (multi-file only)
+  // [{ name, status: 'queued'|'uploading'|'queued_processing'|'failed', progress }]
+  const [fileStatuses, setFileStatuses] = useState([])
+
+  // Single-file SSE progress
+  const [singleProgress, setSingleProgress] = useState(0)
+  const [singlePhase, setSinglePhase] = useState('uploading') // uploading | processing
+
+  // Shared upload options
   const [sport, setSport] = useState('boxing')
   const [sessions, setSessions] = useState([])
-  const [sessionValue, setSessionValue] = useState('')   // '' = skip, uuid = existing, 'new' = create inline
+  const [sessionValue, setSessionValue] = useState('')   // '' | uuid | 'new'
   const [newLabel, setNewLabel] = useState('')
   const [newSessionType, setNewSessionType] = useState('sparring')
   const [newSessionNotes, setNewSessionNotes] = useState('')
-  const [durationSeconds, setDurationSeconds] = useState(null)
+  const [clipNotes, setClipNotes] = useState('')
+  const [autoNavigate, setAutoNavigate] = useState(true)
+
+  const isMulti = files.length > 1
+
+  // ─── File selection ────────────────────────────────────────────────────────
 
   async function handleFileChange(e) {
-    const picked = e.target.files?.[0]
-    if (!picked) return
+    const picked = Array.from(e.target.files || [])
+    if (!picked.length) return
 
-    if (!ACCEPTED_TYPES.includes(picked.type)) {
-      setError('Unsupported file type. Please upload an MP4 or MOV file.')
+    const invalid = picked.find(f => !ACCEPTED_TYPES.includes(f.type))
+    if (invalid) {
+      setError('Unsupported file type. Please upload MP4 or MOV files.')
       return
     }
 
-    setFile(picked)
+    setFiles(picked)
     setError(null)
     setState('selecting')
 
-    // Extract duration and fetch sessions in parallel — both non-fatal if they fail
-    const [duration, sessionsData] = await Promise.allSettled([
-      getVideoDuration(picked),
-      api.get('/sessions'),
-    ])
-
-    setDurationSeconds(duration.status === 'fulfilled' ? duration.value : null)
-    setSessions(sessionsData.status === 'fulfilled' ? sessionsData.value : [])
+    const sessionsData = await api.get('/sessions').catch(() => [])
+    setSessions(Array.isArray(sessionsData) ? sessionsData : [])
   }
+
+  // ─── Helpers ───────────────────────────────────────────────────────────────
+
+  function updateFileStatus(index, patch) {
+    setFileStatuses(prev => prev.map((s, i) => i === index ? { ...s, ...patch } : s))
+  }
+
+  async function uploadFileMultipart(file, sessionId, fileIndex) {
+    updateFileStatus(fileIndex, { status: 'uploading', progress: 0 })
+
+    const duration = await getVideoDuration(file).catch(() => null)
+
+    const { clip_id, upload_id, s3_key, part_urls } = await api.post('/uploads/multipart/init', {
+      filename: file.name,
+      content_type: file.type,
+      file_size: file.size,
+      sport,
+      session_id: sessionId,
+      duration_seconds: duration,
+      notes: clipNotes.trim() || null,
+    })
+
+    // Upload parts with per-chunk retry
+    const parts = []
+    let uploaded = 0
+
+    async function uploadPart({ part_number, url }) {
+      const etag = await uploadPartWithRetry(file, part_number, url)
+      parts.push({ part_number, etag })
+      uploaded++
+      updateFileStatus(fileIndex, { progress: Math.round((uploaded / part_urls.length) * 100) })
+    }
+
+    for (let i = 0; i < part_urls.length; i += CONCURRENCY) {
+      await Promise.all(part_urls.slice(i, i + CONCURRENCY).map(uploadPart))
+    }
+
+    parts.sort((a, b) => a.part_number - b.part_number)
+
+    const { job_id } = await api.post('/uploads/multipart/complete', {
+      clip_id, upload_id, s3_key, parts,
+    })
+
+    return { clip_id, job_id }
+  }
+
+  // ─── Single-file upload (with SSE progress + optional redirect to clip) ────
+
+  async function handleSingleUpload(sessionId) {
+    const file = files[0]
+    setSinglePhase('uploading')
+    setSingleProgress(0)
+
+    const duration = await getVideoDuration(file).catch(() => null)
+
+    const { clip_id, upload_id, s3_key, part_urls } = await api.post('/uploads/multipart/init', {
+      filename: file.name,
+      content_type: file.type,
+      file_size: file.size,
+      sport,
+      session_id: sessionId,
+      duration_seconds: duration,
+      notes: clipNotes.trim() || null,
+    })
+
+    const parts = []
+    let uploaded = 0
+
+    async function uploadPart({ part_number, url }) {
+      const etag = await uploadPartWithRetry(file, part_number, url)
+      parts.push({ part_number, etag })
+      uploaded++
+      setSingleProgress(Math.round((uploaded / part_urls.length) * 90))
+    }
+
+    for (let i = 0; i < part_urls.length; i += CONCURRENCY) {
+      await Promise.all(part_urls.slice(i, i + CONCURRENCY).map(uploadPart))
+    }
+
+    parts.sort((a, b) => a.part_number - b.part_number)
+
+    const { job_id } = await api.post('/uploads/multipart/complete', {
+      clip_id, upload_id, s3_key, parts,
+    })
+
+    const token = await getToken()
+    setSinglePhase('processing')
+    setSingleProgress(0)
+
+    let succeeded = false
+    await listenToJobProgress(job_id, token, (data) => {
+      if (data.status === 'processing') setSingleProgress(data.progress)
+      else if (data.status === 'complete') { succeeded = true; setSingleProgress(100) }
+      else if (data.status === 'failed') { setError('Processing failed — please try again'); setState('error') }
+    })
+
+    if (succeeded) {
+      if (onUploadComplete) onUploadComplete()
+      if (autoNavigate && sessionId) {
+        navigate(`/sessions/${sessionId}`)
+      } else if (autoNavigate) {
+        navigate(`/clips/${clip_id}`)
+      } else {
+        setState('idle')
+        setSingleProgress(0)
+      }
+    }
+  }
+
+  // ─── Multi-file upload (sequential, navigate to session when all queued) ───
+
+  async function handleMultiUpload(sessionId) {
+    const initial = files.map(f => ({ name: f.name, status: 'queued', progress: 0 }))
+    setFileStatuses(initial)
+
+    let successCount = 0
+    for (let i = 0; i < files.length; i++) {
+      try {
+        await uploadFileMultipart(files[i], sessionId, i)
+        updateFileStatus(i, { status: 'queued_processing', progress: 100 })
+        successCount++
+      } catch (err) {
+        updateFileStatus(i, { status: 'failed', progress: 0, error: err.message })
+        // Continue with remaining files — don't stop the batch
+      }
+    }
+
+    if (successCount === 0) {
+      setError('All uploads failed. Check your connection and try again.')
+      setState('error')
+      return
+    }
+
+    if (onUploadComplete) onUploadComplete()
+    navigate(`/sessions/${sessionId}`)
+  }
+
+  // ─── Start upload ──────────────────────────────────────────────────────────
 
   async function handleStartUpload() {
     setState('uploading')
-    setProgress(0)
 
     try {
-      // Create new session inline if requested
-      let session_id = sessionValue || null
+      // Resolve session
+      let sessionId = sessionValue || null
       if (sessionValue === 'new') {
         const created = await api.post('/sessions', {
           label: newLabel || null,
@@ -76,102 +243,44 @@ export default function UploadButton({ onUploadComplete }) {
           sport,
           session_type: newSessionType,
         })
-        session_id = created.id
+        sessionId = created.id
       }
 
-      // Multipart upload — split into 10MB chunks
-      const CHUNK_SIZE = 10 * 1024 * 1024
-
-      const { clip_id, upload_id, s3_key, part_urls } = await api.post('/uploads/multipart/init', {
-        filename: file.name,
-        content_type: file.type,
-        file_size: file.size,
-        sport,
-        session_id,
-        duration_seconds: durationSeconds,
-        notes: clipNotes.trim() || null,
-      })
-
-      // Upload parts with max 3 concurrent
-      const parts = []
-      const concurrency = 3
-      let uploaded = 0
-
-      async function uploadPart({ part_number, url }) {
-        const start = (part_number - 1) * CHUNK_SIZE
-        const chunk = file.slice(start, start + CHUNK_SIZE)
-        const res = await fetch(url, { method: 'PUT', body: chunk })
-        if (!res.ok) throw new Error(`Part ${part_number} failed`)
-        const etag = res.headers.get('ETag')
-        parts.push({ part_number, etag })
-        uploaded++
-        setProgress(Math.round((uploaded / part_urls.length) * 90))
+      if (isMulti) {
+        await handleMultiUpload(sessionId)
+      } else {
+        await handleSingleUpload(sessionId)
       }
-
-      // Process in batches of `concurrency`
-      for (let i = 0; i < part_urls.length; i += concurrency) {
-        await Promise.all(part_urls.slice(i, i + concurrency).map(uploadPart))
-      }
-
-      // Sort parts by part_number (required by S3)
-      parts.sort((a, b) => a.part_number - b.part_number)
-
-      const { job_id } = await api.post('/uploads/multipart/complete', {
-        clip_id,
-        upload_id,
-        s3_key,
-        parts,
-      })
-
-      const token = await getToken()
-      setState('processing')
-      setProgress(0)
-
-      let succeeded = false
-      await listenToJobProgress(job_id, token, (data) => {
-        if (data.status === 'processing') {
-          setProgress(data.progress)
-        } else if (data.status === 'complete') {
-          succeeded = true
-          setProgress(100)
-        } else if (data.status === 'failed') {
-          setError('Processing failed — please try again')
-          setState('error')
-        }
-      })
-
-      if (succeeded) {
-        if (onUploadComplete) onUploadComplete()
-        if (autoNavigate) {
-          navigate(`/clips/${clip_id}`)
-        } else {
-          setState('idle')
-          setProgress(0)
-        }
-      }
-
     } catch (err) {
       console.error(err)
       setError(err.message)
       setState('error')
     } finally {
-      fileInputRef.current.value = ''
+      if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
   function reset() {
     setState('idle')
     setError(null)
-    setFile(null)
+    setFiles([])
+    setFileStatuses([])
+    setSingleProgress(0)
+    setSinglePhase('uploading')
     setSport('boxing')
     setSessionValue('')
     setNewLabel('')
     setNewSessionType('sparring')
-    setDurationSeconds(null)
+    setNewSessionNotes('')
+    setClipNotes('')
   }
 
-  // Only show sessions matching the selected sport
   const filteredSessions = sessions.filter(s => s.sport === sport)
+  const canStart = !isMulti
+    ? true
+    : sessionValue !== ''  // multi requires a session
+
+  // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div>
@@ -179,26 +288,69 @@ export default function UploadButton({ onUploadComplete }) {
         ref={fileInputRef}
         type="file"
         accept="video/mp4,video/quicktime,video/x-msvideo"
+        multiple
         className="hidden"
         onChange={handleFileChange}
       />
 
-      {(state === 'idle' || state === 'error') && (
+      {/* Idle — show upload button */}
+      {state === 'idle' && (
         <button
-          onClick={() => {
-            reset()
-            fileInputRef.current?.click()
-          }}
+          onClick={() => { reset(); fileInputRef.current?.click() }}
           className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-500 transition-colors"
         >
           Upload clip
         </button>
       )}
 
+      {/* Error — show message + retry / restart options */}
+      {state === 'error' && (
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-red-400">{error}</p>
+          <div className="flex gap-2">
+            {files.length > 0 && (
+              <button
+                onClick={handleStartUpload}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg transition-colors"
+              >
+                Try again
+              </button>
+            )}
+            <button
+              onClick={() => { reset(); fileInputRef.current?.click() }}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-lg transition-colors"
+            >
+              Choose different file
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Selecting — file picker options */}
       {state === 'selecting' && (
         <div className="flex flex-col gap-3">
-          <p className="text-sm text-gray-400 truncate max-w-xs">{file.name}</p>
+          {/* File list */}
+          <div>
+            {files.length === 1 ? (
+              <p className="text-sm text-gray-400 truncate max-w-xs">{files[0].name}</p>
+            ) : (
+              <div className="space-y-1">
+                <p className="text-xs text-gray-500">{files.length} clips selected</p>
+                {files.map((f, i) => (
+                  <p key={i} className="text-xs text-gray-400 truncate max-w-xs">• {f.name}</p>
+                ))}
+              </div>
+            )}
+          </div>
 
+          {/* Multi-file session required notice */}
+          {isMulti && (
+            <p className="text-xs text-indigo-400 bg-indigo-950 border border-indigo-800 rounded-lg px-3 py-2">
+              A session is required when uploading multiple clips.
+            </p>
+          )}
+
+          {/* Sport + session */}
           <div className="flex flex-wrap gap-3">
             <div className="flex flex-col gap-1">
               <label className="text-xs text-gray-500">Sport</label>
@@ -207,20 +359,21 @@ export default function UploadButton({ onUploadComplete }) {
                 onChange={e => { setSport(e.target.value); setSessionValue('') }}
                 className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg"
               >
-                {SPORTS.map(s => (
-                  <option key={s.value} value={s.value}>{s.label}</option>
-                ))}
+                {SPORTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
             </div>
 
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-500">Session (optional)</label>
+              <label className="text-xs text-gray-500">
+                Session {isMulti ? <span className="text-red-400">*</span> : '(optional)'}
+              </label>
               <select
                 value={sessionValue}
                 onChange={e => setSessionValue(e.target.value)}
                 className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg"
               >
-                <option value="">Skip</option>
+                {!isMulti && <option value="">Skip</option>}
+                {isMulti && <option value="">Select a session...</option>}
                 {filteredSessions.map(s => (
                   <option key={s.id} value={s.id}>
                     {s.label || `${s.session_type || 'session'}`}
@@ -231,6 +384,7 @@ export default function UploadButton({ onUploadComplete }) {
             </div>
           </div>
 
+          {/* Inline session create */}
           {sessionValue === 'new' && (
             <div className="flex flex-wrap gap-3 pl-3 border-l-2 border-indigo-800">
               <div className="flex flex-col gap-1">
@@ -250,9 +404,7 @@ export default function UploadButton({ onUploadComplete }) {
                   onChange={e => setNewSessionType(e.target.value)}
                   className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg"
                 >
-                  {SESSION_TYPES.map(t => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
-                  ))}
+                  {SESSION_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1 w-full">
@@ -271,36 +423,43 @@ export default function UploadButton({ onUploadComplete }) {
           {/* Clip notes */}
           <div>
             <label className="text-xs text-gray-500 mb-1 block">
-              What are you working on? <span className="text-gray-600">(optional — helps the AI focus its feedback)</span>
+              {isMulti ? 'Notes for all clips' : 'What are you working on?'}{' '}
+              <span className="text-gray-600">
+                {isMulti
+                  ? '(optional — applies to all clips; edit per-clip notes from the player page after upload)'
+                  : '(optional — helps the AI focus feedback)'}
+              </span>
             </label>
             <textarea
               value={clipNotes}
               onChange={e => setClipNotes(e.target.value)}
-              placeholder="e.g. Drilling hooks, working on guard after the jab, round 3 sparring..."
+              placeholder="e.g. Drilling hooks, working on guard after the jab..."
               rows={2}
               className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
             />
           </div>
 
-          {/* Auto-navigate toggle */}
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={autoNavigate}
-              onChange={e => setAutoNavigate(e.target.checked)}
-              className="w-3.5 h-3.5 accent-indigo-500"
-            />
-            <span className="text-xs text-gray-400">
-              Open clip when processing completes
-            </span>
-          </label>
+          {/* Auto-navigate (single only) */}
+          {!isMulti && (
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoNavigate}
+                onChange={e => setAutoNavigate(e.target.checked)}
+                className="w-3.5 h-3.5 accent-indigo-500"
+              />
+              <span className="text-xs text-gray-400">Open clip when processing completes</span>
+            </label>
+          )}
 
+          {/* Actions */}
           <div className="flex gap-2">
             <button
               onClick={handleStartUpload}
-              className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-500 transition-colors text-sm"
+              disabled={!canStart}
+              className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm"
             >
-              Start upload
+              {isMulti ? `Upload ${files.length} clips` : 'Start upload'}
             </button>
             <button
               onClick={reset}
@@ -312,31 +471,51 @@ export default function UploadButton({ onUploadComplete }) {
         </div>
       )}
 
-      {state === 'uploading' && (
+      {/* Uploading — single file */}
+      {state === 'uploading' && !isMulti && (
         <div className="flex items-center gap-3">
           <div className="w-40 h-2 bg-gray-800 rounded-full overflow-hidden">
             <div
-              className="h-full bg-indigo-500 transition-all duration-200"
-              style={{ width: `${progress}%` }}
+              className={`h-full transition-all duration-200 ${singlePhase === 'uploading' ? 'bg-indigo-500' : 'bg-violet-500'}`}
+              style={{ width: `${singleProgress}%` }}
             />
           </div>
-          <span className="text-sm text-gray-400">Uploading {progress}%</span>
+          <span className="text-sm text-gray-400">
+            {singlePhase === 'uploading' ? `Uploading ${singleProgress}%` : `Analysing ${singleProgress}%`}
+          </span>
         </div>
       )}
 
-      {state === 'processing' && (
-        <div className="flex items-center gap-3">
-          <div className="w-40 h-2 bg-gray-800 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-violet-500 transition-all duration-200"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <span className="text-sm text-gray-400">Analysing {progress}%</span>
+      {/* Uploading — multi file */}
+      {state === 'uploading' && isMulti && (
+        <div className="flex flex-col gap-2 min-w-[240px]">
+          {fileStatuses.map((fs, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-gray-400 truncate">{fs.name}</p>
+                <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden mt-1">
+                  <div
+                    className={`h-full rounded-full transition-all duration-200 ${
+                      fs.status === 'failed' ? 'bg-red-500' :
+                      fs.status === 'queued_processing' ? 'bg-green-500' :
+                      fs.status === 'uploading' ? 'bg-indigo-500' : 'bg-gray-700'
+                    }`}
+                    style={{ width: `${fs.progress}%` }}
+                  />
+                </div>
+              </div>
+              <span className={`text-xs flex-shrink-0 w-16 text-right ${fs.status === 'failed' ? 'text-red-400' : 'text-gray-500'}`}>
+                {fs.status === 'queued' ? 'Queued' :
+                 fs.status === 'uploading' ? `${fs.progress}%` :
+                 fs.status === 'queued_processing' ? '✓ Done' : '✗ Failed'}
+              </span>
+            </div>
+          ))}
         </div>
       )}
 
-      {error && (
+      {/* Inline error for uploading state (e.g. SSE processing failure) */}
+      {state !== 'error' && error && (
         <p className="mt-2 text-sm text-red-400">{error}</p>
       )}
     </div>
@@ -358,37 +537,10 @@ function getVideoDuration(file) {
 }
 
 
-function uploadToS3(file, presignedUrl, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-
-    xhr.upload.addEventListener('progress', (e) => {
-      if (e.lengthComputable) {
-        onProgress(Math.round((e.loaded / e.total) * 100))
-      }
-    })
-
-    xhr.addEventListener('load', () => {
-      if (xhr.status === 200) resolve()
-      else reject(new Error(`S3 upload failed with status ${xhr.status}`))
-    })
-
-    xhr.addEventListener('error', () => reject(new Error('S3 upload failed')))
-
-    xhr.open('PUT', presignedUrl)
-    xhr.setRequestHeader('Content-Type', file.type)
-    xhr.send(file)
-  })
-}
-
-
 function listenToJobProgress(jobId, token, onData) {
   return new Promise((resolve, reject) => {
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-    const source = new EventSource(
-      `${API_URL}/jobs/${jobId}/stream?token=${token}`
-    )
-
+    const source = new EventSource(`${API_URL}/jobs/${jobId}/stream?token=${token}`)
     source.onmessage = (event) => {
       const data = JSON.parse(event.data)
       onData(data)
@@ -397,10 +549,6 @@ function listenToJobProgress(jobId, token, onData) {
         resolve()
       }
     }
-
-    source.onerror = () => {
-      source.close()
-      reject(new Error('SSE connection lost'))
-    }
+    source.onerror = () => { source.close(); reject(new Error('SSE connection lost')) }
   })
 }

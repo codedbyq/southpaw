@@ -36,6 +36,7 @@ class CoachProfileResponse(BaseModel):
     review_preference: str
     rating: float | None
     review_count: int
+    avg_response_hours: float | None
     is_featured: bool
     marketplace_visible: bool
     moderation_status: str
@@ -281,6 +282,7 @@ def _build_response(profile: CoachProfile) -> CoachProfileResponse:
         credit_rate=profile.credit_rate,
         review_preference=profile.review_preference or "either",
         rating=profile.rating,
+        avg_response_hours=profile.avg_response_hours,
         review_count=profile.review_count,
         is_featured=profile.is_featured,
         marketplace_visible=profile.marketplace_visible,

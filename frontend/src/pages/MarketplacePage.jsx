@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { UserButton } from '@clerk/react'
 import { useApi } from '../api/client'
 import StarRating from '../components/StarRating'
+import { CoachCardSkeleton } from '../components/Skeleton'
 
 const SPECIALIZATION_LABELS = {
   boxing:     'Boxing',
@@ -75,6 +76,13 @@ function CoachCard({ coach }) {
             {coach.review_count > 0 && (
               <span>{coach.review_count} review{coach.review_count !== 1 ? 's' : ''}</span>
             )}
+            {coach.avg_response_hours && (
+              <span className="text-gray-600">
+                ~{coach.avg_response_hours < 24
+                  ? `${Math.round(coach.avg_response_hours)}h`
+                  : `${Math.round(coach.avg_response_hours / 24)}d`} response
+              </span>
+            )}
             {coach.review_preference && coach.review_preference !== 'either' && (
               <span className="text-gray-600">
                 Prefers {coach.review_preference} reviews
@@ -143,7 +151,9 @@ export default function MarketplacePage() {
         </div>
 
         {loading ? (
-          <p className="text-gray-500 text-sm">Loading...</p>
+          <div className="flex flex-col gap-4">
+            {[...Array(3)].map((_, i) => <CoachCardSkeleton key={i} />)}
+          </div>
         ) : coaches.length === 0 ? (
           <div className="text-center py-20">
             <p className="text-gray-500 text-sm">No coaches available yet.</p>

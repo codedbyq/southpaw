@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApi } from '../api/client'
+import { CoachCardSkeleton } from '../components/Skeleton'
 
 const STATUS_TABS = ['pending', 'approved', 'rejected']
 
@@ -152,7 +153,9 @@ export default function AdminPage() {
         </div>
 
         {loading ? (
-          <p className="text-gray-500 text-sm">Loading...</p>
+          <div className="flex flex-col gap-4">
+            {[...Array(3)].map((_, i) => <CoachCardSkeleton key={i} />)}
+          </div>
         ) : coaches.length === 0 ? (
           <p className="text-gray-500 text-sm">No {tab} coach profiles.</p>
         ) : (
