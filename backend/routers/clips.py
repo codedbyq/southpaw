@@ -61,12 +61,16 @@ class ClipUpdateRequest(BaseModel):
 async def list_clips(
     clerk_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    limit: int = 20,
+    offset: int = 0,
 ):
-    """Return all clips for the authenticated user, newest first."""
+    """Return clips for the authenticated user, newest first. Paginated."""
     result = await db.execute(
         select(Clip)
         .where(Clip.clerk_user_id == clerk_user_id)
         .order_by(Clip.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     clips = result.scalars().all()
 
