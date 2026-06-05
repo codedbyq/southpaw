@@ -22,9 +22,33 @@ import subprocess
 
 logger = logging.getLogger(__name__)
 
-# Load YOLOv8 pose model once at module level
-# Downloads automatically on first run (~6MB)
-model = YOLO("yolov8s-pose.pt")  # s = small, better keypoint accuracy than nano
+# YOLOv8 model filenames per tier — models are loaded lazily on first use
+# nano  → free tier   — fast, good for simple footage
+# small → pro tier    — current baseline, good balance
+# medium → elite tier — best keypoint accuracy for occluded sparring footage
+YOLO_MODEL_FILES = {
+    "free":  "yolov8n-pose.pt",
+    "pro":   "yolov8s-pose.pt",
+    "elite": "yolov8m-pose.pt",
+}
+
+# LLM model per tier — same DeepSeek API, different model
+LLM_MODELS = {
+    "free":  "deepseek-chat",      # DeepSeek V3 — fast, cost-effective
+    "pro":   "deepseek-chat",      # DeepSeek V3
+    "elite": "deepseek-reasoner",  # DeepSeek R1 — chain-of-thought reasoning
+}
+
+# Lazy model cache — loaded on first use, one model in memory at a time
+_model_cache: dict = {}
+
+def _get_model(subscription_tier: str):
+    """Load the appropriate YOLOv8 model lazily and cache it."""
+    model_file = YOLO_MODEL_FILES.get(subscription_tier, YOLO_MODEL_FILES["pro"])
+    if model_file not in _model_cache:
+        logger.info(f"Loading YOLOv8 model: {model_file}")
+        _model_cache[model_file] = YOLO(model_file)
+    return _model_cache[model_file]
 
 # S3 client for the worker
 s3 = boto3.client(
@@ -67,6 +91,16 @@ def process_clip(self, clip_id: str, job_id: str):
             job.progress = 0
             db.commit()
 
+            # Resolve subscription tier for model selection
+            from models.user import User as UserModel
+            user_obj = db.execute(
+                select(UserModel).where(UserModel.clerk_user_id == clip.clerk_user_id)
+            ).scalar_one_or_none()
+            subscription_tier = user_obj.subscription_tier if user_obj else "pro"
+            llm_model = LLM_MODELS.get(subscription_tier, "deepseek-chat")
+            yolo_model = _get_model(subscription_tier)
+            logger.info(f"Processing clip {clip_id} — tier={subscription_tier}, yolo={yolo_model.model_name if hasattr(yolo_model, 'model_name') else 'unknown'}, llm={llm_model}")
+
             # Step 1 — download clip from S3 to a temp file
             tmp_path = _download_clip(clip.s3_key)
             logger.info(f"Downloaded clip to {tmp_path}")
@@ -83,15 +117,16 @@ def process_clip(self, clip_id: str, job_id: str):
 
             # Step 3 — run YOLOv8 frame by frame
             frames_data, strikes_data, total_frames = _process_video(
-                tmp_path, job_id, job, db
+                tmp_path, job_id, job, db, yolo_model=yolo_model
             )
 
-            # Step 4 — compute head movement score from nose keypoint variance
+            # Step 4 — compute head movement score + stance detection
             head_score = _compute_head_movement(frames_data)
             if head_score is not None:
                 clip.head_movement_score = head_score
-                db.commit()
-                logger.info(f"Head movement score for clip {clip_id}: {head_score}")
+            clip.stance = _detect_stance(frames_data)
+            db.commit()
+            logger.info(f"Head movement: {head_score}, stance: {clip.stance} for clip {clip_id}")
 
             # Step 5 — write keypoint JSON to S3
             result_s3_key = f"processed/{clip.clerk_user_id}/{clip_id}/keypoints.json"
@@ -102,16 +137,28 @@ def process_clip(self, clip_id: str, job_id: str):
             })
             logger.info(f"Wrote keypoint JSON to S3: {result_s3_key}")
 
-            # Step 6 — write strike rows to Postgres
+            # Step 6 — compute recovery_seconds (time from each strike to the next)
+            for i, strike in enumerate(strikes_data):
+                if i + 1 < len(strikes_data):
+                    strike["recovery_seconds"] = round(
+                        strikes_data[i + 1]["timestamp_seconds"] - strike["timestamp_seconds"], 3
+                    )
+                else:
+                    strike["recovery_seconds"] = None
+
+            # Write strike rows to Postgres
             for strike in strikes_data:
                 db.add(Strike(
                     job_id=job.id,
                     type=strike["type"],
                     timestamp_seconds=strike["timestamp_seconds"],
                     frame_index=strike["frame_index"],
-                    confidence=None,  # rules-based has no confidence score
+                    confidence=None,
                     arm_extension=strike.get("arm_extension"),
                     guard_dropped=strike.get("guard_dropped"),
+                    peak_velocity=strike.get("peak_velocity"),
+                    recovery_seconds=strike.get("recovery_seconds"),
+                    hip_rotation=strike.get("hip_rotation"),
                 ))
             db.commit()
             logger.info(f"Wrote {len(strikes_data)} strikes to Postgres")
@@ -120,8 +167,12 @@ def process_clip(self, clip_id: str, job_id: str):
             try:
                 strikes_for_feedback = db.execute(select(Strike).where(Strike.job_id == job.id)).scalars().all()
                 if strikes_for_feedback:
-                    summary = build_clip_summary(clip, strikes_for_feedback)
-                    clip.feedback = generate_feedback_sync(summary)
+                    from models.user import User as UserModel
+                    user_obj = db.execute(
+                        select(UserModel).where(UserModel.clerk_user_id == clip.clerk_user_id)
+                    ).scalar_one_or_none()
+                    summary = build_clip_summary(clip, strikes_for_feedback, user=user_obj)
+                    clip.feedback = generate_feedback_sync(summary, llm_model=llm_model)
                     db.commit()
                     logger.info(f"Generated clip feedback for clip {clip_id}")
             except Exception as feedback_exc:
@@ -286,7 +337,7 @@ def _apply_rotation(frame, rotation: int):
         return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
     return frame
 
-def _process_video(tmp_path: str, job_id: str, job, db) -> tuple:
+def _process_video(tmp_path: str, job_id: str, job, db, yolo_model=None) -> tuple:
     cap = cv2.VideoCapture(tmp_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
@@ -311,7 +362,8 @@ def _process_video(tmp_path: str, job_id: str, job, db) -> tuple:
             frame = _apply_rotation(frame, rotation)
 
         # Run YOLOv8 pose on the frame
-        results = model(frame, verbose=False)
+        active_model = yolo_model if yolo_model is not None else YOLO_MODELS["pro"]
+        results = active_model(frame, verbose=False)
 
         timestamp = frame_index / fps
         frame_strikes = []
@@ -414,52 +466,76 @@ def _classify_strike(history, current_frame, last_strike_frame):
     # Determine strike type and which side threw it
     strike_type = None
     striking_side = None  # "right" | "left" | "kick"
+    peak_vel = 0.0
 
     if rw_vel > STRIKE_VELOCITY_THRESHOLD and abs(rw_dx) > abs(rw_dy):
         strike_type = "hook" if right_hook_shape else "jab"
         striking_side = "right"
+        peak_vel = rw_vel
     elif lw_vel > STRIKE_VELOCITY_THRESHOLD and abs(lw_dx) > abs(lw_dy):
         strike_type = "hook" if left_hook_shape else "cross"
         striking_side = "left"
+        peak_vel = lw_vel
     elif ra_vel > STRIKE_VELOCITY_THRESHOLD and ra_dy < -0.01:
         strike_type = "roundhouse_kick"
         striking_side = "kick"
+        peak_vel = ra_vel
     elif la_vel > STRIKE_VELOCITY_THRESHOLD and la_dy < -0.01:
         strike_type = "rear_kick"
         striking_side = "kick"
+        peak_vel = la_vel
 
     if strike_type is None:
         return None
 
     # --- arm_extension: shoulder-to-wrist distance at peak velocity ---
-    # Larger value = more extended arm. Kicks have no arm_extension.
     arm_extension = None
     if striking_side == "right":
         if current[6]["visibility"] > MIN_KEYPOINT_CONF and current[10]["visibility"] > MIN_KEYPOINT_CONF:
-            arm_extension = _distance(current, 6, 10)  # right shoulder → right wrist
+            arm_extension = _distance(current, 6, 10)
     elif striking_side == "left":
         if current[5]["visibility"] > MIN_KEYPOINT_CONF and current[9]["visibility"] > MIN_KEYPOINT_CONF:
-            arm_extension = _distance(current, 5, 9)   # left shoulder → left wrist
+            arm_extension = _distance(current, 5, 9)
 
-    # --- guard_dropped: was the opposite hand below the nose during the strike? ---
-    # In image coords y increases downward, so wrist_y > nose_y means hand is below nose.
+    # --- guard_dropped ---
     guard_dropped = None
     nose_y = current[0]["y"]
     if current[0]["visibility"] > MIN_KEYPOINT_CONF:
         if striking_side == "right" and current[9]["visibility"] > MIN_KEYPOINT_CONF:
-            guard_dropped = bool(current[9]["y"] > nose_y)   # left (guard) wrist below nose?
+            guard_dropped = bool(current[9]["y"] > nose_y)
         elif striking_side == "left" and current[10]["visibility"] > MIN_KEYPOINT_CONF:
-            guard_dropped = bool(current[10]["y"] > nose_y)  # right (guard) wrist below nose?
+            guard_dropped = bool(current[10]["y"] > nose_y)
         elif striking_side == "kick":
             lw_conf = current[9]["visibility"]
             rw_conf = current[10]["visibility"]
             if lw_conf > MIN_KEYPOINT_CONF and rw_conf > MIN_KEYPOINT_CONF:
                 guard_dropped = bool(current[9]["y"] > nose_y or current[10]["y"] > nose_y)
 
+    # --- hip_rotation: shoulder-hip angle delta from start to peak of strike ---
+    # Measures torso rotation (power generation). Larger = more hip involvement.
+    # Uses left shoulder(5), right shoulder(6), left hip(11), right hip(12)
+    hip_rotation = None
+    hip_kps = [5, 6, 11, 12]
+    if all(current[k]["visibility"] > MIN_KEYPOINT_CONF for k in hip_kps) and \
+       all(past[k]["visibility"] > MIN_KEYPOINT_CONF for k in hip_kps):
+        import math
+        def _angle(kps, a, b):
+            dx = kps[b]["x"] - kps[a]["x"]
+            dy = kps[b]["y"] - kps[a]["y"]
+            return math.degrees(math.atan2(dy, dx))
+        shoulder_angle_start = _angle(past, 5, 6)
+        shoulder_angle_end   = _angle(current, 5, 6)
+        hip_angle_start      = _angle(past, 11, 12)
+        hip_angle_end        = _angle(current, 11, 12)
+        hip_rotation = round(abs((shoulder_angle_end - shoulder_angle_start) -
+                                  (hip_angle_end - hip_angle_start)), 2)
+
     return {
         "type": strike_type,
         "arm_extension": arm_extension,
         "guard_dropped": guard_dropped,
+        "peak_velocity": round(peak_vel, 4),
+        "hip_rotation": hip_rotation,
     }
 
 
@@ -501,6 +577,43 @@ def _compute_head_movement(frames_data: list) -> float | None:
     raw_score = (_std(nose_xs) + _std(nose_ys)) / 2
     normalized = min(round(raw_score / 0.15, 3), 1.0)
     return normalized
+
+
+def _detect_stance(frames_data: list) -> str | None:
+    """
+    Infer stance (orthodox/southpaw) from ankle and shoulder keypoint positions.
+    Orthodox: left foot forward (lower x in typical camera setup, left shoulder leads)
+    Southpaw: right foot forward (higher x, right shoulder leads)
+    Returns 'orthodox', 'southpaw', or 'unknown'.
+    """
+    left_forward_count = 0
+    right_forward_count = 0
+
+    for frame in frames_data:
+        for skeleton in frame.get("skeletons", []):
+            kps = skeleton.get("keypoints", [])
+            if len(kps) < 17:
+                continue
+            # Ankle keypoints: 15=left, 16=right
+            la, ra = kps[15], kps[16]
+            if la["visibility"] > MIN_KEYPOINT_CONF and ra["visibility"] > MIN_KEYPOINT_CONF:
+                # Left ankle further forward (smaller x = closer to camera in profile view)
+                if la["x"] < ra["x"]:
+                    left_forward_count += 1
+                else:
+                    right_forward_count += 1
+            break  # primary subject only
+
+    total = left_forward_count + right_forward_count
+    if total < 30:
+        return "unknown"
+
+    left_ratio = left_forward_count / total
+    if left_ratio > 0.6:
+        return "orthodox"
+    elif left_ratio < 0.4:
+        return "southpaw"
+    return "unknown"
 
 
 def _notify_clip_complete_sync(db, clip):
