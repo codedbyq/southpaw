@@ -20,6 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Pre-download YOLOv8 models at build time so they're baked into the image
+# Avoids downloading on every container start
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt'); YOLO('yolov8s-pose.pt')"
+
 EXPOSE 8000
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
