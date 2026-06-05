@@ -204,9 +204,10 @@ async def complete_media_upload(
         profile.avatar_s3_key = body.s3_key
     else:
         profile.intro_video_s3_key = body.s3_key
-        # Queue thumbnail extraction
-        from worker.tasks import extract_coach_thumbnail
-        extract_coach_thumbnail.delay(str(profile.id), body.s3_key)
+        # Queue thumbnail extraction on Modal
+        import modal
+        extract_thumb = modal.Function.lookup("southpaw-inference", "extract_coach_thumbnail")
+        extract_thumb.spawn(str(profile.id), body.s3_key)
 
     await db.commit()
     return {"status": "ok"}

@@ -16,6 +16,8 @@ class User(Base):
     credits_balance: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     stripe_customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    experience_level: Mapped[str] = mapped_column(String, nullable=False, default="intermediate")
+    # beginner | intermediate | advanced | pro
     trend_feedback: Mapped[str | None] = mapped_column(String, nullable=True)
     trend_feedback_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

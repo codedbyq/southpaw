@@ -15,5 +15,8 @@ class Strike(Base):
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     arm_extension: Mapped[float | None] = mapped_column(Float, nullable=True)
     guard_dropped: Mapped[bool | None] = mapped_column(nullable=True)
+    peak_velocity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    recovery_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    hip_rotation: Mapped[float | None] = mapped_column(Float, nullable=True)  # shoulder-hip angle delta during strike
 
     job: Mapped["Job"] = relationship("Job", back_populates="strikes")

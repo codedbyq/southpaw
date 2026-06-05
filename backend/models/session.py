@@ -14,6 +14,9 @@ class Session(Base):
     sport: Mapped[str] = mapped_column(String, nullable=False, default="boxing")
     session_type: Mapped[str | None] = mapped_column(String, nullable=True)
     notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    training_phase: Mapped[str | None] = mapped_column(String, nullable=True)
+    # fight_camp | off_season | recovery | regular
+    opponent_context: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

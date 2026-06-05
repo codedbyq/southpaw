@@ -14,6 +14,13 @@ from openai import AsyncOpenAI, OpenAI
 from core.config import settings
 
 
+# LLM model per subscription tier — same DeepSeek API, different model
+LLM_MODELS = {
+    "free":  "deepseek-chat",      # DeepSeek V3 — fast, cost-effective
+    "pro":   "deepseek-chat",      # DeepSeek V3
+    "elite": "deepseek-reasoner",  # DeepSeek R1 — chain-of-thought reasoning
+}
+
 SPORT_LABELS = {
     "boxing":    "Boxing",
     "muay_thai": "Muay Thai",
@@ -181,7 +188,20 @@ def _aggregate_strikes(strikes) -> dict:
     }
 
 
-def build_clip_summary(clip, strikes) -> dict:
+def _aggregate_velocity_and_recovery(strikes) -> dict:
+    """Aggregate peak velocity, recovery time, and hip rotation stats."""
+    velocities  = [s.peak_velocity    for s in strikes if getattr(s, "peak_velocity",    None) is not None]
+    recoveries  = [s.recovery_seconds for s in strikes if getattr(s, "recovery_seconds", None) is not None]
+    hip_rots    = [s.hip_rotation     for s in strikes if getattr(s, "hip_rotation",     None) is not None]
+    return {
+        "avg_peak_velocity":    round(sum(velocities)  / len(velocities),  4) if velocities  else None,
+        "max_peak_velocity":    round(max(velocities),                      4) if velocities  else None,
+        "avg_recovery_seconds": round(sum(recoveries)  / len(recoveries),  3) if recoveries  else None,
+        "avg_hip_rotation":     round(sum(hip_rots)    / len(hip_rots),    2) if hip_rots    else None,
+    }
+
+
+def build_clip_summary(clip, strikes, user=None) -> dict:
     """Summary for a single clip — same dict shape as build_session_summary."""
     duration = clip.duration_seconds or 0
     total_strikes = len(strikes)
@@ -190,36 +210,48 @@ def build_clip_summary(clip, strikes) -> dict:
         "sport": clip.sport,
         "session_type": None,
         "athlete_notes": getattr(clip, "notes", None),
+        "experience_level": getattr(user, "experience_level", None) if user else None,
+        "training_phase": None,
+        "opponent_context": None,
+        "stance": getattr(clip, "stance", None),
+        "head_movement_score": getattr(clip, "head_movement_score", None),
         "duration_seconds": duration,
         "strikes_per_minute": (
             round(total_strikes / (duration / 60), 1) if duration > 0 else None
         ),
-        "head_movement_score": getattr(clip, "head_movement_score", None),
+        "velocity_and_recovery": _aggregate_velocity_and_recovery(strikes),
         "combos": _aggregate_combos(strikes),
         "fatigue_curve": _compute_fatigue_curve(strikes, duration),
         **agg,
     }
 
 
-def build_session_summary(session, clips, strikes) -> dict:
+def build_session_summary(session, clips, strikes, user=None) -> dict:
     """Summary across all clips in a session."""
     total_duration = sum(c.duration_seconds or 0 for c in clips)
     total_strikes = len(strikes)
     agg = _aggregate_strikes(strikes)
 
-    # Average head movement score across clips that have it
     head_scores = [c.head_movement_score for c in clips if getattr(c, "head_movement_score", None) is not None]
     avg_head_movement = round(sum(head_scores) / len(head_scores), 3) if head_scores else None
+
+    stances = [c.stance for c in clips if getattr(c, "stance", None) not in (None, "unknown")]
+    stance = max(set(stances), key=stances.count) if stances else None
 
     return {
         "sport": session.sport,
         "session_type": session.session_type,
         "athlete_notes": getattr(session, "notes", None),
+        "training_phase": getattr(session, "training_phase", None),
+        "opponent_context": getattr(session, "opponent_context", None),
+        "experience_level": getattr(user, "experience_level", None) if user else None,
+        "stance": stance,
+        "head_movement_score": avg_head_movement,
         "duration_seconds": total_duration,
         "strikes_per_minute": (
             round(total_strikes / (total_duration / 60), 1) if total_duration > 0 else None
         ),
-        "head_movement_score": avg_head_movement,
+        "velocity_and_recovery": _aggregate_velocity_and_recovery(strikes),
         "combos": _aggregate_combos(strikes),
         "fatigue_curve": _compute_fatigue_curve(strikes, total_duration),
         **agg,
@@ -230,35 +262,89 @@ def build_session_summary(session, clips, strikes) -> dict:
 # Prompt construction
 # ---------------------------------------------------------------------------
 
+EXPERIENCE_CONTEXT = {
+    "beginner":     "This is a beginner athlete — focus on fundamental patterns and safety. Use simple language. Celebrate small wins.",
+    "intermediate": "This is an intermediate athlete — expect baseline technique, focus on consistency and specific habits to fix.",
+    "advanced":     "This is an advanced athlete — be precise and demanding. Reference subtle technical details. High standards expected.",
+    "pro":          "This is a professional or competitive fighter — be direct, technical, and unsparing. No softening. Data drives every point.",
+}
+
+TRAINING_PHASE_CONTEXT = {
+    "fight_camp":  "They are in fight camp — prioritize sharpness, timing, and eliminating bad habits under pressure. Volume context matters.",
+    "off_season":  "This is off-season training — emphasize technique development over output. Volume drops are expected.",
+    "recovery":    "This is a recovery session — lower output is expected. Note any technique regressions that may indicate fatigue.",
+    "regular":     "Regular training session — balanced assessment of output and technique.",
+}
+
+FEW_SHOT_EXAMPLE = """
+Example of excellent coaching feedback (do not copy verbatim, use as a style guide):
+
+**Strengths**
+- Jab output is strong at 18/min — above average for your level. Extension averaging 0.81 shows commitment to the punch.
+- Guard discipline on hooks improved: 34% drop rate vs 58% last session — the drill work is showing.
+
+**Areas to improve**
+- Cross drops the guard 71% of the time — every cross is an invitation to a counter. Return the left hand immediately.
+- Fatigue curve shows 40% drop in output in the final third with arm extension falling to 0.63. Conditioning is limiting your later rounds.
+"""
+
+
 def build_feedback_prompt(summary: dict) -> tuple[str, str]:
-    """Returns (system_prompt, user_message)."""
+    """Returns (system_prompt, user_message) with chain-of-thought and full context."""
     sport = summary["sport"]
     sport_label = SPORT_LABELS.get(sport, sport)
     sport_ctx = SPORT_CONTEXT.get(sport, "")
 
-    system = f"""You are an expert martial arts coach specializing in {sport_label}.
+    experience_level = summary.get("experience_level") or "intermediate"
+    exp_ctx = EXPERIENCE_CONTEXT.get(experience_level, "")
+
+    training_phase = summary.get("training_phase")
+    phase_ctx = TRAINING_PHASE_CONTEXT.get(training_phase, "") if training_phase else ""
+
+    system = f"""You are an elite martial arts coach specializing in {sport_label} with decades of experience training competitive fighters.
 {sport_ctx}
 
-Analyze the session data below and give honest, specific, actionable coaching feedback.
-Format your response exactly like this:
+{exp_ctx}
+{phase_ctx}
+
+PROCESS (follow this order internally before writing):
+1. Identify the single most significant pattern in the data — what stands out most?
+2. Determine what is causing it — technique flaw, fatigue, habit, or lack of training?
+3. Then write the feedback below.
+
+FORMAT your response exactly like this:
 
 **Strengths**
-- [specific observation referencing the data]
-- [specific observation referencing the data]
+- [specific observation with actual numbers from the data]
+- [specific observation with actual numbers from the data]
 
 **Areas to improve**
-- [specific observation referencing the data]
-- [specific observation referencing the data]
+- [most critical issue, with numbers and a concrete fix]
+- [second issue, with numbers and a concrete fix]
 
-Rules: reference actual numbers from the data. If the athlete has provided a focus or context note, \
-tailor your feedback to that intent — e.g. if they said they were drilling hooks, evaluate hook \
-consistency rather than overall strike variety. Keep total response under 200 words. \
-No filler phrases like "great job" or "keep it up". Be a coach, not a cheerleader."""
+{FEW_SHOT_EXAMPLE}
+
+Rules:
+- Reference actual numbers from the data in every bullet
+- If the athlete stated a focus/context, tailor feedback to that intent
+- Calibrate tone and standards to their experience level
+- Keep total response under 250 words
+- No filler phrases. No "great job". Be a coach, not a cheerleader."""
 
     lines = [f"Sport: {sport_label}"]
+    lines.append(f"Experience level: {experience_level}")
 
     if summary.get("athlete_notes"):
-        lines.append(f"Athlete's focus / context: {summary['athlete_notes']}")
+        lines.append(f"Athlete's stated focus: {summary['athlete_notes']}")
+
+    if summary.get("opponent_context"):
+        lines.append(f"Opponent / sparring context: {summary['opponent_context']}")
+
+    if training_phase:
+        lines.append(f"Training phase: {TRAINING_PHASE_CONTEXT.get(training_phase, training_phase)}")
+
+    if summary.get("stance"):
+        lines.append(f"Detected stance: {summary['stance']}")
 
     if summary["session_type"]:
         lines.append(f"Session type: {SESSION_TYPE_LABELS.get(summary['session_type'], summary['session_type'])}")
@@ -278,6 +364,15 @@ No filler phrases like "great job" or "keep it up". Be a coach, not a cheerleade
             label = strike_type.replace("_", " ").title()
             lines.append(f"  {label}: {count} ({pct}%)")
 
+    vel = summary.get("velocity_and_recovery", {})
+    if vel.get("avg_peak_velocity") is not None:
+        lines.append(f"\nStrike speed (normalized velocity, higher = faster):")
+        lines.append(f"  Avg peak velocity: {vel['avg_peak_velocity']}  |  Max: {vel['max_peak_velocity']}")
+        if vel.get("avg_recovery_seconds") is not None:
+            lines.append(f"  Avg recovery time between strikes: {vel['avg_recovery_seconds']}s")
+        if vel.get("avg_hip_rotation") is not None:
+            lines.append(f"  Avg hip rotation angle: {vel['avg_hip_rotation']}° (higher = more torso involvement)")
+
     gd = summary["guard_discipline"]
     if gd["drop_rate"] is not None:
         lines.append(f"\nGuard discipline (% of strikes where guard hand fell below nose):")
@@ -288,7 +383,7 @@ No filler phrases like "great job" or "keep it up". Be a coach, not a cheerleade
 
     ext = summary["arm_extension"]
     if ext["avg"] is not None:
-        lines.append(f"\nArm extension (shoulder-to-wrist distance, 0–1 scale, higher = more extended):")
+        lines.append(f"\nArm extension (shoulder-to-wrist, 0–1 scale, higher = more extended):")
         lines.append(f"  Average: {ext['avg']}")
         for t, avg in sorted(ext["by_type"].items(), key=lambda x: -x[1]):
             label = t.replace("_", " ").title()
@@ -297,14 +392,13 @@ No filler phrases like "great job" or "keep it up". Be a coach, not a cheerleade
     head_movement = summary.get("head_movement_score")
     if head_movement is not None:
         level = "high" if head_movement > 0.6 else "moderate" if head_movement > 0.3 else "low"
-        lines.append(f"\nHead movement score: {head_movement} / 1.0 ({level})")
-        lines.append("  (0 = stationary head, 1 = very active movement — slipping, bobbing, weaving)")
+        lines.append(f"\nHead movement score: {head_movement} / 1.0 ({level} — 0=stationary, 1=active slipping/bobbing)")
 
     combos = summary.get("combos")
     if combos:
-        lines.append(f"\nCombos (strikes within {COMBO_WINDOW_SECONDS}s of each other):")
-        lines.append(f"  Total combos: {combos['total_combos']}, avg length: {combos['avg_length']} strikes")
-        lines.append(f"  Guard dropped during a combo: {combos['guard_dropped_in_combo']} times")
+        lines.append(f"\nCombos (strikes within {COMBO_WINDOW_SECONDS}s):")
+        lines.append(f"  Total: {combos['total_combos']}, avg length: {combos['avg_length']} strikes")
+        lines.append(f"  Guard dropped during combo: {combos['guard_dropped_in_combo']} times")
         if combos["top_sequences"]:
             lines.append("  Top sequences:")
             for seq in combos["top_sequences"]:
@@ -313,7 +407,7 @@ No filler phrases like "great job" or "keep it up". Be a coach, not a cheerleade
 
     fatigue = summary.get("fatigue_curve")
     if fatigue:
-        lines.append("\nFatigue curve (session split into thirds):")
+        lines.append("\nFatigue curve (session thirds):")
         for t in fatigue:
             ext_str = f", avg extension {t['avg_arm_extension']}" if t["avg_arm_extension"] else ""
             lines.append(
@@ -329,9 +423,21 @@ No filler phrases like "great job" or "keep it up". Be a coach, not a cheerleade
 # LLM call
 # ---------------------------------------------------------------------------
 
-async def generate_feedback(summary: dict) -> str:
+def _llm_config(llm_model: str) -> dict:
+    """Return model-specific config. R1 uses higher tokens and different temperature."""
+    is_reasoner = llm_model == "deepseek-reasoner"
+    return {
+        "model": llm_model,
+        "max_tokens": 800 if is_reasoner else 400,
+        # R1 doesn't support system-level temperature adjustment the same way
+        "temperature": 1.0 if is_reasoner else 0.7,
+    }
+
+
+async def generate_feedback(summary: dict, llm_model: str = "deepseek-chat") -> str:
     """Call DeepSeek with the session summary and return the coaching text."""
     system, user_message = build_feedback_prompt(summary)
+    cfg = _llm_config(llm_model)
 
     client = AsyncOpenAI(
         api_key=settings.DEEPSEEK_API_KEY,
@@ -339,21 +445,20 @@ async def generate_feedback(summary: dict) -> str:
     )
 
     response = await client.chat.completions.create(
-        model="deepseek-chat",
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user_message},
         ],
-        max_tokens=400,
-        temperature=0.7,
+        **cfg,
     )
 
     return response.choices[0].message.content
 
 
-def generate_feedback_sync(summary: dict) -> str:
+def generate_feedback_sync(summary: dict, llm_model: str = "deepseek-chat") -> str:
     """Synchronous version for use in Celery workers (which run in a sync context)."""
     system, user_message = build_feedback_prompt(summary)
+    cfg = _llm_config(llm_model)
 
     client = OpenAI(
         api_key=settings.DEEPSEEK_API_KEY,
@@ -361,13 +466,11 @@ def generate_feedback_sync(summary: dict) -> str:
     )
 
     response = client.chat.completions.create(
-        model="deepseek-chat",
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user_message},
         ],
-        max_tokens=400,
-        temperature=0.7,
+        **cfg,
     )
 
     return response.choices[0].message.content

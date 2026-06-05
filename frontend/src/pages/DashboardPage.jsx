@@ -281,6 +281,22 @@ export default function DashboardPage() {
               Review queue
             </button>
           )}
+          {currentUser && (
+            <select
+              value={currentUser.experience_level || 'intermediate'}
+              onChange={async e => {
+                await api.patch('/users/me', { experience_level: e.target.value })
+                setCurrentUser(prev => ({ ...prev, experience_level: e.target.value }))
+              }}
+              className="text-xs px-2.5 py-1.5 bg-gray-800 border border-gray-700 text-gray-400 rounded-lg focus:outline-none focus:border-indigo-500"
+              title="Your experience level affects AI feedback tone and standards"
+            >
+              <option value="beginner">Beginner</option>
+              <option value="intermediate">Intermediate</option>
+              <option value="advanced">Advanced</option>
+              <option value="pro">Pro</option>
+            </select>
+          )}
           {currentUser?.is_admin && (
             <button onClick={() => navigate('/admin')} className="text-sm text-amber-500 hover:text-amber-400 transition-colors">
               Admin

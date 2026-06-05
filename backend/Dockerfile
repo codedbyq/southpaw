@@ -22,7 +22,7 @@ COPY . .
 
 # Pre-download YOLOv8 models at build time so they're baked into the image
 # Avoids downloading on every container start
-RUN python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt'); YOLO('yolov8s-pose.pt')"
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt'); YOLO('yolov8s-pose.pt'); YOLO('yolov8m-pose.pt')"
 
 EXPOSE 8000
 

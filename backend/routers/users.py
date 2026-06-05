@@ -26,6 +26,7 @@ class UserResponse(BaseModel):
     subscription_tier: Literal["free", "pro", "elite"]
     credits_balance: int
     is_admin: bool
+    experience_level: str
     trend_feedback: str | None
     trend_feedback_at: datetime | None
     created_at: datetime
@@ -35,7 +36,8 @@ class UserResponse(BaseModel):
 
 
 class UpdateUserRequest(BaseModel):
-    user_type: Literal["athlete", "coach"]
+    user_type: Literal["athlete", "coach"] | None = None
+    experience_level: Literal["beginner", "intermediate", "advanced", "pro"] | None = None
 
 
 @router.get("/me", response_model=UserResponse)
@@ -52,6 +54,7 @@ async def get_me(
         subscription_tier=user.subscription_tier,
         credits_balance=user.credits_balance,
         is_admin=user.is_admin,
+        experience_level=user.experience_level,
         trend_feedback=user.trend_feedback,
         trend_feedback_at=user.trend_feedback_at,
         created_at=user.created_at,
@@ -66,7 +69,10 @@ async def update_me(
 ):
     """Update the current user's user_type (onboarding step)."""
     user = await _get_or_create_user(clerk_user_id, db)
-    user.user_type = body.user_type
+    if body.user_type is not None:
+        user.user_type = body.user_type
+    if body.experience_level is not None:
+        user.experience_level = body.experience_level
     await db.commit()
 
     return UserResponse(
@@ -76,6 +82,7 @@ async def update_me(
         subscription_tier=user.subscription_tier,
         credits_balance=user.credits_balance,
         is_admin=user.is_admin,
+        experience_level=user.experience_level,
         trend_feedback=user.trend_feedback,
         trend_feedback_at=user.trend_feedback_at,
         created_at=user.created_at,

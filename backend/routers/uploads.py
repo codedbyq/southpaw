@@ -1,9 +1,11 @@
 import uuid
 from datetime import datetime, timezone, timedelta
+from backend.models import user
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
+import modal
 
 from core.s3 import (
     generate_presigned_upload_url,
@@ -13,7 +15,7 @@ from core.s3 import (
     abort_multipart_upload,
 )
 from dependencies import get_current_user
-from worker.tasks import process_clip
+# from worker.tasks import process_clip
 from db.session import get_db
 from models.clip import Clip
 from models.job import Job
@@ -21,6 +23,13 @@ from models.session import Session
 from models.user import User
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
+_run_inference = None
+
+def get_inference_function():
+    global _run_inference
+    if _run_inference is None:
+        _run_inference = modal.Function.lookup("southpaw-inference", "run_inference")
+    return _run_inference
 
 ALLOWED_CONTENT_TYPES = {"video/mp4", "video/quicktime", "video/x-msvideo"}
 MAX_DURATION_SECONDS = 300  # 5 minutes
@@ -140,20 +149,22 @@ async def upload_complete(
     Step 3 of 3 in the upload flow (step 2 is the browser uploading to S3).
     Marks the clip as uploaded and enqueues the processing job.
     """
-    # Fetch clip and verify it belongs to the requesting user
+    # Fetch clip + user in a single query
     result = await db.execute(
-        select(Clip).where(
-            Clip.id == body.clip_id,
-            Clip.clerk_user_id == user_id,
-        )
+        select(Clip, User)
+        .outerjoin(User, Clip.clerk_user_id == User.clerk_user_id)
+        .where(Clip.id == body.clip_id, Clip.clerk_user_id == user_id)
     )
-    clip = result.scalar_one_or_none()
+    row = result.one_or_none()
 
-    if clip is None:
+    if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Clip not found",
         )
+
+    clip, user = row
+    tier = user.subscription_tier if user else "free"
 
     if clip.status != "pending":
         raise HTTPException(
@@ -171,7 +182,12 @@ async def upload_complete(
     await db.commit()
     await db.refresh(job)
 
-    process_clip.delay(str(clip.id), str(job.id))
+    get_inference_function().spawn(
+        clip_id=str(clip.id),
+        job_id=str(job.id),
+        s3_key=clip.s3_key,
+        tier=tier,
+    )
 
     return UploadCompleteResponse(
         clip_id=str(clip.id),
@@ -298,12 +314,18 @@ async def multipart_complete(
     """
     Finalize the multipart upload, mark clip as uploaded, enqueue processing.
     """
+    # Fetch clip + user in a single query
     result = await db.execute(
-        select(Clip).where(Clip.id == body.clip_id, Clip.clerk_user_id == user_id)
+        select(Clip, User)
+        .outerjoin(User, Clip.clerk_user_id == User.clerk_user_id)
+        .where(Clip.id == body.clip_id, Clip.clerk_user_id == user_id)
     )
-    clip = result.scalar_one_or_none()
-    if not clip:
+    row = result.one_or_none()
+    if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip not found")
+
+    clip, user = row
+    tier = user.subscription_tier if user else "free"
 
     if clip.status != "pending":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
@@ -328,6 +350,11 @@ async def multipart_complete(
     await db.commit()
     await db.refresh(job)
 
-    process_clip.delay(str(clip.id), str(job.id))
+    get_inference_function().spawn(
+        clip_id=str(clip.id),
+        job_id=str(job.id),
+        s3_key=clip.s3_key,
+        tier=tier,
+    )
 
     return UploadCompleteResponse(clip_id=str(clip.id), job_id=str(job.id))
