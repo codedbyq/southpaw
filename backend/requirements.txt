@@ -9,8 +9,6 @@ clerk-backend-api
 boto3
 redis
 psycopg2-binary
-ultralytics
-opencv-python-headless
 pyjwt[crypto]
 openai
 svix
