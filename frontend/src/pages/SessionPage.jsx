@@ -40,6 +40,8 @@ export default function SessionPage() {
   const [editNotes, setEditNotes] = useState('')
   const [editSport, setEditSport] = useState('')
   const [editType, setEditType] = useState('')
+  const [editTrainingPhase, setEditTrainingPhase] = useState('')
+  const [editOpponentContext, setEditOpponentContext] = useState('')
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
@@ -66,6 +68,8 @@ export default function SessionPage() {
     setEditNotes(session.notes || '')
     setEditSport(session.sport || 'boxing')
     setEditType(session.session_type || '')
+    setEditTrainingPhase(session.training_phase || '')
+    setEditOpponentContext(session.opponent_context || '')
     setEditing(true)
   }
 
@@ -77,6 +81,8 @@ export default function SessionPage() {
         notes: editNotes || null,
         sport: editSport,
         session_type: editType || null,
+        training_phase: editTrainingPhase || null,
+        opponent_context: editOpponentContext || null,
       })
       setSession(updated)
       setEditing(false)
@@ -177,11 +183,26 @@ export default function SessionPage() {
                       {Object.entries(SESSION_TYPE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                     </select>
                   </div>
+                  <select value={editTrainingPhase} onChange={e => setEditTrainingPhase(e.target.value)}
+                    className="px-3 py-2 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg focus:outline-none">
+                    <option value="">Training phase (optional)</option>
+                    <option value="regular">Regular training</option>
+                    <option value="fight_camp">Fight camp</option>
+                    <option value="off_season">Off season</option>
+                    <option value="recovery">Recovery</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={editOpponentContext}
+                    onChange={e => setEditOpponentContext(e.target.value)}
+                    placeholder="Opponent context — e.g. taller southpaw with strong clinch..."
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-indigo-500"
+                  />
                   <textarea
                     value={editNotes}
                     onChange={e => setEditNotes(e.target.value)}
                     placeholder="Session notes — context for the AI and coaches..."
-                    rows={3}
+                    rows={2}
                     className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
                   />
                   <div className="flex gap-2">
@@ -227,8 +248,16 @@ export default function SessionPage() {
                       })}
                     </span>
                   </div>
+                  {session.training_phase && (
+                    <span className="text-xs px-2.5 py-1 bg-gray-800 text-gray-400 rounded-full capitalize">
+                      {session.training_phase.replace('_', ' ')}
+                    </span>
+                  )}
                   {session.notes && (
                     <p className="mt-3 text-sm text-gray-400">{session.notes}</p>
+                  )}
+                  {session.opponent_context && (
+                    <p className="mt-1 text-xs text-gray-500">Opponent: {session.opponent_context}</p>
                   )}
                 </>
               )}

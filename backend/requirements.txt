@@ -7,9 +7,7 @@ python-dotenv
 httpx
 clerk-backend-api
 boto3
-celery[redis]
 redis
-boto3
 psycopg2-binary
 ultralytics
 opencv-python-headless
@@ -17,3 +15,4 @@ pyjwt[crypto]
 openai
 svix
 stripe
+modal

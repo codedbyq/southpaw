@@ -25,6 +25,8 @@ class SessionCreateRequest(BaseModel):
     sport: str = "boxing"
     session_type: str | None = None
     notes: str | None = None
+    training_phase: str | None = None  # fight_camp | off_season | recovery | regular
+    opponent_context: str | None = None
 
 
 class SessionUpdateRequest(BaseModel):
@@ -32,6 +34,8 @@ class SessionUpdateRequest(BaseModel):
     sport: str | None = None
     session_type: str | None = None
     notes: str | None = None
+    training_phase: str | None = None
+    opponent_context: str | None = None
 
 
 class SessionResponse(BaseModel):
@@ -63,6 +67,8 @@ class SessionDetailResponse(BaseModel):
     sport: str
     session_type: str | None
     notes: str | None
+    training_phase: str | None
+    opponent_context: str | None
     created_at: datetime
     clips: list[ClipResponse]
     metrics: SessionMetrics
@@ -220,6 +226,8 @@ async def get_session(
         sport=session.sport,
         session_type=session.session_type,
         notes=session.notes,
+        training_phase=session.training_phase,
+        opponent_context=session.opponent_context,
         created_at=session.created_at,
         clips=clip_responses,
         metrics=metrics,
@@ -310,7 +318,11 @@ async def get_session_feedback(
     if not strikes:
         raise HTTPException(status_code=400, detail="No processed strikes in this session yet — upload and process a clip first")
 
-    summary = build_session_summary(session, clips, strikes)
+    # Fetch user for experience level context
+    user_result = await db.execute(select(User).where(User.clerk_user_id == user_id))
+    current_user = user_result.scalar_one_or_none()
+
+    summary = build_session_summary(session, clips, strikes, user=current_user)
     current_hash = compute_session_hash(summary)
 
     # Return cached feedback if the session is clean and the data hasn't changed
@@ -318,7 +330,9 @@ async def get_session_feedback(
         return {"feedback": session.llm_summary}
 
     try:
-        feedback = await generate_feedback(summary)
+        from services.feedback import LLM_MODELS
+        llm_model = LLM_MODELS.get(current_user.subscription_tier if current_user else "pro", "deepseek-chat")
+        feedback = await generate_feedback(summary, llm_model=llm_model)
         session.llm_summary = feedback
         session.llm_summary_hash = current_hash
         session.llm_summary_dirty = False
@@ -341,6 +355,8 @@ async def create_session(
         sport=body.sport,
         session_type=body.session_type,
         notes=body.notes,
+        training_phase=body.training_phase,
+        opponent_context=body.opponent_context,
     )
     db.add(session)
     await db.commit()
@@ -372,6 +388,10 @@ async def update_session(
         session.session_type = body.session_type
     if body.notes is not None:
         session.notes = body.notes
+    if body.training_phase is not None:
+        session.training_phase = body.training_phase
+    if body.opponent_context is not None:
+        session.opponent_context = body.opponent_context
 
     # Changing notes marks feedback dirty
     if body.notes is not None:
@@ -391,6 +411,8 @@ async def update_session(
         sport=session.sport,
         session_type=session.session_type,
         notes=session.notes,
+        training_phase=session.training_phase,
+        opponent_context=session.opponent_context,
         created_at=session.created_at,
         clips=clip_responses,
         metrics=metrics,

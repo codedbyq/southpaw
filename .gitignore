@@ -48,3 +48,4 @@ frontend/*.local
 *.njsproj
 *.sln
 *.sw?
+CONTEXT.md
