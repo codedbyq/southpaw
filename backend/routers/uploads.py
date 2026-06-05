@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime, timezone, timedelta
-from backend.models import user
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
