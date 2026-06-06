@@ -273,7 +273,16 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
                 strike_rows.append(row)
             db.commit()
 
-            # Generate clip-level LLM coaching feedback (best-effort)
+            # Mark complete — user can view clip immediately
+            job.status = "complete"
+            job.progress = 100
+            job.result_s3_key = result_s3_key
+            db.commit()
+
+            publish("complete", 100, result_url=result_s3_key)
+
+            # Generate clip-level LLM coaching feedback (post-complete,
+            # so the user sees the player page while this runs)
             try:
                 from services.feedback import build_clip_summary, generate_feedback_sync
 
@@ -297,14 +306,6 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
                 if session_obj:
                     session_obj.llm_summary_dirty = True
                     db.commit()
-
-            # Mark complete
-            job.status = "complete"
-            job.progress = 100
-            job.result_s3_key = result_s3_key
-            db.commit()
-
-            publish("complete", 100, result_url=result_s3_key)
 
         except Exception as e:
             logger.error(f"Inference failed for job {job_id}: {e}")
