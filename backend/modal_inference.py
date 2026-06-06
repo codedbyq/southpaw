@@ -25,6 +25,7 @@ image = (
         "sqlalchemy",
         "psycopg2-binary",
         "redis",
+        "pydantic-settings",
     ])
     .add_local_python_source("models")
     .add_local_python_source("db")
