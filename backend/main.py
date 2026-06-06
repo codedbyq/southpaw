@@ -11,6 +11,8 @@ app.add_middleware(
         "http://localhost:5173",
         "http://localhost:3000",
         "https://southpaw-beige.vercel.app",
+        "https://trysouthpaw.com",
+        "https://www.trysouthpaw.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
