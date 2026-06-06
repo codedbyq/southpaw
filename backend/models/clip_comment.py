@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import String, Float, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
-from db.session import Base
+from db.base import Base
 
 
 class ClipComment(Base):
