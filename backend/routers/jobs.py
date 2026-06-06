@@ -106,28 +106,39 @@ async def _event_generator(job_id: str):
         encoding="utf-8",
         decode_responses=True,
         ssl_cert_reqs=None,
-        socket_timeout=30,
-        socket_connect_timeout=10,
+        socket_timeout=60,
+        retry_on_timeout=True,
     )
     pubsub = redis.pubsub()
     await pubsub.subscribe(f"job:{job_id}")
 
     try:
-        # Initial heartbeat so browser knows connection is open
         yield "data: {\"status\": \"connected\"}\n\n"
 
-        async for message in pubsub.listen():
-            if message["type"] != "message":
-                continue
+        while True:
+            try:
+                message = await asyncio.wait_for(
+                    pubsub.get_message(ignore_subscribe_messages=True),
+                    timeout=10.0,
+                )
 
-            data = message["data"]
-            yield f"data: {data}\n\n"
+                if message is not None:
+                    data = message["data"]
+                    if isinstance(data, bytes):
+                        data = data.decode("utf-8")
 
-            parsed = json.loads(data)
-            if parsed.get("status") in ("complete", "failed"):
-                break
+                    yield f"data: {data}\n\n"
 
-            await asyncio.sleep(0.01)
+                    parsed = json.loads(data)
+                    if parsed.get("status") in ("complete", "failed"):
+                        break
+                else:
+                    yield ": keepalive\n\n"
+
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+
+            await asyncio.sleep(0.1)
 
     finally:
         await pubsub.unsubscribe(f"job:{job_id}")
