@@ -207,7 +207,7 @@ async def complete_media_upload(
         # Queue thumbnail extraction on Modal
         import modal
         extract_thumb = modal.Function.from_name("southpaw-inference", "extract_coach_thumbnail")
-        extract_thumb.spawn(str(profile.id), body.s3_key)
+        await extract_thumb.spawn.aio(str(profile.id), body.s3_key)
 
     await db.commit()
     return {"status": "ok"}

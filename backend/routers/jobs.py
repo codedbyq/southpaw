@@ -101,7 +101,14 @@ async def stream_job(
 
 async def _event_generator(job_id: str):
     """Subscribe to Redis pub/sub channel and forward events to browser."""
-    redis = aioredis.from_url(settings.REDIS_URL)
+    redis = aioredis.from_url(
+        settings.REDIS_URL,
+        encoding="utf-8",
+        decode_responses=True,
+        ssl_cert_reqs=None,
+        socket_timeout=30,
+        socket_connect_timeout=10,
+    )
     pubsub = redis.pubsub()
     await pubsub.subscribe(f"job:{job_id}")
 
@@ -114,9 +121,6 @@ async def _event_generator(job_id: str):
                 continue
 
             data = message["data"]
-            if isinstance(data, bytes):
-                data = data.decode("utf-8")
-
             yield f"data: {data}\n\n"
 
             parsed = json.loads(data)
