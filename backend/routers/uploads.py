@@ -181,7 +181,7 @@ async def upload_complete(
     await db.commit()
     await db.refresh(job)
 
-    get_inference_function().spawn(
+    await get_inference_function().spawn.aio(
         clip_id=str(clip.id),
         job_id=str(job.id),
         s3_key=clip.s3_key,
@@ -349,7 +349,7 @@ async def multipart_complete(
     await db.commit()
     await db.refresh(job)
 
-    get_inference_function().spawn(
+    await get_inference_function().spawn.aio(
         clip_id=str(clip.id),
         job_id=str(job.id),
         s3_key=clip.s3_key,
