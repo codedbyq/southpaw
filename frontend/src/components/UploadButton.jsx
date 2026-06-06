@@ -185,7 +185,7 @@ export default function UploadButton({ onUploadComplete }) {
       if (data.status === 'processing') setSingleProgress(data.progress)
       else if (data.status === 'complete') { succeeded = true; setSingleProgress(100) }
       else if (data.status === 'failed') { setError('Processing failed — please try again'); setState('error') }
-    })
+    }, api.get)
 
     if (succeeded) {
       if (onUploadComplete) onUploadComplete()
@@ -537,7 +537,7 @@ function getVideoDuration(file) {
 }
 
 
-function listenToJobProgress(jobId, token, onData) {
+function listenToJobProgress(jobId, token, onData, apiFetch) {
   return new Promise((resolve, reject) => {
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
     const source = new EventSource(`${API_URL}/jobs/${jobId}/stream?token=${token}`)
@@ -549,6 +549,23 @@ function listenToJobProgress(jobId, token, onData) {
         resolve()
       }
     }
-    source.onerror = () => { source.close(); reject(new Error('SSE connection lost')) }
+    source.onerror = () => {
+      source.close()
+      pollJobUntilDone(jobId, onData, apiFetch).then(resolve, reject)
+    }
   })
+}
+
+async function pollJobUntilDone(jobId, onData, apiFetch) {
+  for (let i = 0; i < 120; i++) {
+    await new Promise(r => setTimeout(r, 3000))
+    try {
+      const data = await apiFetch(`/jobs/${jobId}`)
+      onData(data)
+      if (data.status === 'complete' || data.status === 'failed') return
+    } catch {
+      // Network blip — keep polling
+    }
+  }
+  throw new Error('Processing timed out')
 }

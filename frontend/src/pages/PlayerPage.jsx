@@ -31,6 +31,8 @@ export default function PlayerPage() {
   const [movingSession, setMovingSession] = useState(false)
   const [selectedSession, setSelectedSession] = useState('')
 
+  const [feedbackLoading, setFeedbackLoading] = useState(false)
+
   useEffect(() => {
     async function loadClip() {
       try {
@@ -51,6 +53,28 @@ export default function PlayerPage() {
     }
     loadClip()
   }, [clipId])
+
+  // Poll for feedback when clip is processed but feedback hasn't arrived yet
+  useEffect(() => {
+    if (!clip || clip.feedback || clip.status !== 'processed') return
+    setFeedbackLoading(true)
+    let cancelled = false
+    const interval = setInterval(async () => {
+      try {
+        const data = await api.get(`/clips/${clipId}`)
+        if (!cancelled && data.feedback) {
+          setClip(prev => ({ ...prev, feedback: data.feedback }))
+          setFeedbackLoading(false)
+          clearInterval(interval)
+        }
+      } catch {}
+    }, 4000)
+    const timeout = setTimeout(() => {
+      clearInterval(interval)
+      if (!cancelled) setFeedbackLoading(false)
+    }, 120000)
+    return () => { cancelled = true; clearInterval(interval); clearTimeout(timeout) }
+  }, [clip?.status, clip?.feedback, clipId])
 
   async function handleMoveSession(newSessionId) {
     setMovingSession(true)
@@ -298,6 +322,15 @@ export default function PlayerPage() {
             <h2 className="text-lg font-semibold mb-4">Coaching feedback</h2>
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 text-sm text-gray-300 leading-relaxed">
               {renderFeedback(clip.feedback)}
+            </div>
+          </div>
+        )}
+        {isProcessed && !clip.feedback && feedbackLoading && (
+          <div>
+            <h2 className="text-lg font-semibold mb-4">Coaching feedback</h2>
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 text-sm text-gray-400 flex items-center gap-3">
+              <span className="inline-block w-4 h-4 border-2 border-gray-600 border-t-yellow-400 rounded-full animate-spin" />
+              Analyzing your technique...
             </div>
           </div>
         )}
