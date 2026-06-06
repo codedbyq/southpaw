@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import String, Integer, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
-from db.session import Base
+from db.base import Base
 
 class Clip(Base):
     __tablename__ = "clips"

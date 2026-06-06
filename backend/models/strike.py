@@ -2,7 +2,7 @@ import uuid
 from sqlalchemy import String, Float, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from db.session import Base
+from db.base import Base
 
 class Strike(Base):
     __tablename__ = "strikes"

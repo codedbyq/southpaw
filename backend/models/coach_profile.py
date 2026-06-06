@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import String, Integer, Float, Boolean, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
-from db.session import Base
+from db.base import Base
 
 
 class CoachProfile(Base):
