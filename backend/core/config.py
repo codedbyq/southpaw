@@ -3,9 +3,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # Clerk
-    CLERK_SECRET_KEY: str
+    CLERK_SECRET_KEY: str = ""
     CLERK_AUTHORIZED_PARTIES: str = "http://localhost:5173"
-    CLERK_FRONTEND_API: str
+    CLERK_FRONTEND_API: str = ""
     CLERK_WEBHOOK_SECRET: str = ""  # set in .env after creating webhook in Clerk dashboard
 
     # Database
@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"  # /0 is the Redis database index
 
     # LLM
-    DEEPSEEK_API_KEY: str
+    DEEPSEEK_API_KEY: str = ""
 
     # Stripe
     STRIPE_SECRET_KEY: str = ""
