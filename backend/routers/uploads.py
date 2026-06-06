@@ -27,7 +27,7 @@ _run_inference = None
 def get_inference_function():
     global _run_inference
     if _run_inference is None:
-        _run_inference = modal.Function.lookup("southpaw-inference", "run_inference")
+        _run_inference = modal.Function.from_name("southpaw-inference", "run_inference")
     return _run_inference
 
 ALLOWED_CONTENT_TYPES = {"video/mp4", "video/quicktime", "video/x-msvideo"}
