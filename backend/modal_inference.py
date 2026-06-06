@@ -26,10 +26,12 @@ image = (
         "psycopg2-binary",
         "redis",
         "pydantic-settings",
+        "openai",
     ])
     .add_local_python_source("models")
     .add_local_python_source("db")
     .add_local_python_source("core")
+    .add_local_python_source("services")
 )
 
 # Model per subscription tier
@@ -39,9 +41,17 @@ TIER_MODELS = {
     "elite": "yolov8m-pose.pt",
 }
 
+# LLM model per subscription tier for clip-level coaching feedback
+TIER_LLM_MODELS = {
+    "free":  "deepseek-chat",
+    "pro":   "deepseek-chat",
+    "elite": "deepseek-reasoner",
+}
+
 STRIKE_VELOCITY_THRESHOLD = 0.08
 STRIKE_COOLDOWN_FRAMES = 15
 VELOCITY_WINDOW = 5
+MIN_KEYPOINT_CONF = 0.3
 
 
 # --- Main inference function ---
@@ -91,6 +101,7 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
     from models.job import Job
     from models.clip import Clip
     from models.strike import Strike
+    from models.user import User
 
     model_name = TIER_MODELS.get(tier, "yolov8n-pose.pt")
     model = YOLO(model_name)
@@ -203,6 +214,24 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
 
             cap.release()
 
+            # Thumbnail extraction (non-fatal)
+            try:
+                thumb_key = _extract_and_upload_thumbnail(
+                    tmp_path, clip_id, clip.clerk_user_id, s3
+                )
+                if thumb_key:
+                    clip.thumbnail_s3_key = thumb_key
+                    db.commit()
+            except Exception as thumb_err:
+                logger.warning(f"Thumbnail generation failed (non-fatal): {thumb_err}")
+
+            # Head movement score + stance detection
+            head_score = _compute_head_movement(frames_data)
+            if head_score is not None:
+                clip.head_movement_score = head_score
+            clip.stance = _detect_stance(frames_data)
+            db.commit()
+
             # Write keypoint JSON to S3
             result_s3_key = f"processed/{clip.clerk_user_id}/{clip_id}/keypoints.json"
             s3.put_object(
@@ -216,16 +245,58 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
                 ContentType="application/json",
             )
 
-            # Write strikes to Postgres
+            # Compute recovery_seconds (time from each strike to the next)
+            for i, strike in enumerate(strikes_data):
+                if i + 1 < len(strikes_data):
+                    strike["recovery_seconds"] = round(
+                        strikes_data[i + 1]["timestamp_seconds"] - strike["timestamp_seconds"], 3
+                    )
+                else:
+                    strike["recovery_seconds"] = None
+
+            # Write strikes to Postgres with full metrics
+            strike_rows = []
             for strike in strikes_data:
-                db.add(Strike(
+                row = Strike(
                     job_id=job.id,
                     type=strike["type"],
                     timestamp_seconds=strike["timestamp_seconds"],
                     frame_index=strike["frame_index"],
                     confidence=None,
-                ))
+                    arm_extension=strike.get("arm_extension"),
+                    guard_dropped=strike.get("guard_dropped"),
+                    peak_velocity=strike.get("peak_velocity"),
+                    recovery_seconds=strike.get("recovery_seconds"),
+                    hip_rotation=strike.get("hip_rotation"),
+                )
+                db.add(row)
+                strike_rows.append(row)
             db.commit()
+
+            # Generate clip-level LLM coaching feedback (best-effort)
+            try:
+                from services.feedback import build_clip_summary, generate_feedback_sync
+
+                user = db.execute(
+                    select(User).where(User.clerk_user_id == clip.clerk_user_id)
+                ).scalar_one_or_none()
+                summary = build_clip_summary(clip, strike_rows, user=user)
+                llm_model = TIER_LLM_MODELS.get(tier, "deepseek-chat")
+                clip.feedback = generate_feedback_sync(summary, llm_model=llm_model)
+                db.commit()
+            except Exception as fb_err:
+                logger.error(f"Clip feedback generation failed for clip {clip_id}: {fb_err}")
+                db.rollback()
+
+            # Mark parent session dirty so cached feedback regenerates
+            if clip.session_id:
+                from models.session import Session as SessionModel
+                session_obj = db.execute(
+                    select(SessionModel).where(SessionModel.id == clip.session_id)
+                ).scalar_one_or_none()
+                if session_obj:
+                    session_obj.llm_summary_dirty = True
+                    db.commit()
 
             # Mark complete
             job.status = "complete"
@@ -280,6 +351,12 @@ def _apply_rotation(frame, rotation: int):
     return frame
 
 
+def _distance(kps, a, b) -> float:
+    dx = kps[a]["x"] - kps[b]["x"]
+    dy = kps[a]["y"] - kps[b]["y"]
+    return round((dx**2 + dy**2) ** 0.5, 4)
+
+
 def _classify_strike(history, current_frame, last_strike_frame):
     if current_frame - last_strike_frame < STRIKE_COOLDOWN_FRAMES:
         return None
@@ -297,27 +374,154 @@ def _classify_strike(history, current_frame, last_strike_frame):
     la_vel, la_dx, la_dy = velocity(15)
     ra_vel, ra_dx, ra_dy = velocity(16)
 
-    left_elbow_x  = current[7]["x"]
-    left_wrist_x  = current[9]["x"]
-    right_elbow_x = current[8]["x"]
-    right_wrist_x = current[10]["x"]
+    left_hook_shape  = abs(current[9]["x"]  - current[7]["x"]) < 0.1
+    right_hook_shape = abs(current[10]["x"] - current[8]["x"]) < 0.1
 
-    left_hook_shape  = abs(left_wrist_x - left_elbow_x) < 0.1
-    right_hook_shape = abs(right_wrist_x - right_elbow_x) < 0.1
+    strike_type = None
+    striking_side = None
+    peak_vel = 0.0
 
     if rw_vel > STRIKE_VELOCITY_THRESHOLD and abs(rw_dx) > abs(rw_dy):
-        return {"type": "hook"} if right_hook_shape else {"type": "jab"}
+        strike_type = "hook" if right_hook_shape else "jab"
+        striking_side = "right"
+        peak_vel = rw_vel
+    elif lw_vel > STRIKE_VELOCITY_THRESHOLD and abs(lw_dx) > abs(lw_dy):
+        strike_type = "hook" if left_hook_shape else "cross"
+        striking_side = "left"
+        peak_vel = lw_vel
+    elif ra_vel > STRIKE_VELOCITY_THRESHOLD and ra_dy < -0.01:
+        strike_type = "roundhouse_kick"
+        striking_side = "kick"
+        peak_vel = ra_vel
+    elif la_vel > STRIKE_VELOCITY_THRESHOLD and la_dy < -0.01:
+        strike_type = "rear_kick"
+        striking_side = "kick"
+        peak_vel = la_vel
 
-    if lw_vel > STRIKE_VELOCITY_THRESHOLD and abs(lw_dx) > abs(lw_dy):
-        return {"type": "hook"} if left_hook_shape else {"type": "cross"}
+    if strike_type is None:
+        return None
 
-    if ra_vel > STRIKE_VELOCITY_THRESHOLD and ra_dy < -0.01:
-        return {"type": "roundhouse_kick"}
+    # arm_extension: shoulder-to-wrist distance at peak velocity
+    arm_extension = None
+    if striking_side == "right":
+        if current[6]["visibility"] > MIN_KEYPOINT_CONF and current[10]["visibility"] > MIN_KEYPOINT_CONF:
+            arm_extension = _distance(current, 6, 10)
+    elif striking_side == "left":
+        if current[5]["visibility"] > MIN_KEYPOINT_CONF and current[9]["visibility"] > MIN_KEYPOINT_CONF:
+            arm_extension = _distance(current, 5, 9)
 
-    if la_vel > STRIKE_VELOCITY_THRESHOLD and la_dy < -0.01:
-        return {"type": "rear_kick"}
+    # guard_dropped: non-striking hand below nose
+    guard_dropped = None
+    nose_y = current[0]["y"]
+    if current[0]["visibility"] > MIN_KEYPOINT_CONF:
+        if striking_side == "right" and current[9]["visibility"] > MIN_KEYPOINT_CONF:
+            guard_dropped = bool(current[9]["y"] > nose_y)
+        elif striking_side == "left" and current[10]["visibility"] > MIN_KEYPOINT_CONF:
+            guard_dropped = bool(current[10]["y"] > nose_y)
+        elif striking_side == "kick":
+            if current[9]["visibility"] > MIN_KEYPOINT_CONF and current[10]["visibility"] > MIN_KEYPOINT_CONF:
+                guard_dropped = bool(current[9]["y"] > nose_y or current[10]["y"] > nose_y)
 
-    return None
+    # hip_rotation: torso rotation from start to peak of strike
+    hip_rotation = None
+    hip_kps = [5, 6, 11, 12]
+    if all(current[k]["visibility"] > MIN_KEYPOINT_CONF for k in hip_kps) and \
+       all(past[k]["visibility"] > MIN_KEYPOINT_CONF for k in hip_kps):
+        import math
+        def _angle(kps, a, b):
+            dx = kps[b]["x"] - kps[a]["x"]
+            dy = kps[b]["y"] - kps[a]["y"]
+            return math.degrees(math.atan2(dy, dx))
+        shoulder_angle_start = _angle(past, 5, 6)
+        shoulder_angle_end   = _angle(current, 5, 6)
+        hip_angle_start      = _angle(past, 11, 12)
+        hip_angle_end        = _angle(current, 11, 12)
+        hip_rotation = round(abs((shoulder_angle_end - shoulder_angle_start) -
+                                  (hip_angle_end - hip_angle_start)), 2)
+
+    return {
+        "type": strike_type,
+        "arm_extension": arm_extension,
+        "guard_dropped": guard_dropped,
+        "peak_velocity": round(peak_vel, 4),
+        "hip_rotation": hip_rotation,
+    }
+
+
+def _extract_and_upload_thumbnail(video_path, clip_id, clerk_user_id, s3_client):
+    import cv2
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps))
+    ret, frame = cap.read()
+    cap.release()
+
+    if not ret:
+        cap = cv2.VideoCapture(video_path)
+        ret, frame = cap.read()
+        cap.release()
+
+    if not ret or frame is None:
+        return None
+
+    rotation = _get_video_rotation(video_path)
+    if rotation:
+        frame = _apply_rotation(frame, rotation)
+
+    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    key = f"clips/{clip_id}/thumbnail.jpg"
+    s3_client.put_object(
+        Bucket=os.environ["S3_BUCKET_NAME"],
+        Key=key,
+        Body=buf.tobytes(),
+        ContentType="image/jpeg",
+    )
+    return key
+
+
+def _compute_head_movement(frames_data) -> float | None:
+    nose_xs = []
+    nose_ys = []
+    for frame in frames_data:
+        for skeleton in frame.get("skeletons", []):
+            kps = skeleton.get("keypoints", [])
+            if kps and kps[0]["visibility"] > MIN_KEYPOINT_CONF:
+                nose_xs.append(kps[0]["x"])
+                nose_ys.append(kps[0]["y"])
+                break
+    if len(nose_xs) < 30:
+        return None
+    def _std(values):
+        mean = sum(values) / len(values)
+        return (sum((v - mean) ** 2 for v in values) / len(values)) ** 0.5
+    raw_score = (_std(nose_xs) + _std(nose_ys)) / 2
+    return min(round(raw_score / 0.15, 3), 1.0)
+
+
+def _detect_stance(frames_data) -> str | None:
+    left_forward = 0
+    right_forward = 0
+    for frame in frames_data:
+        for skeleton in frame.get("skeletons", []):
+            kps = skeleton.get("keypoints", [])
+            if len(kps) < 17:
+                continue
+            la, ra = kps[15], kps[16]
+            if la["visibility"] > MIN_KEYPOINT_CONF and ra["visibility"] > MIN_KEYPOINT_CONF:
+                if la["x"] < ra["x"]:
+                    left_forward += 1
+                else:
+                    right_forward += 1
+            break
+    total = left_forward + right_forward
+    if total < 30:
+        return "unknown"
+    left_ratio = left_forward / total
+    if left_ratio > 0.6:
+        return "orthodox"
+    elif left_ratio < 0.4:
+        return "southpaw"
+    return "unknown"
 
 
 # --- Coach thumbnail extraction ---
