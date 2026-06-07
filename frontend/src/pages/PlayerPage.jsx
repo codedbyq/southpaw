@@ -4,6 +4,7 @@ import { useApi } from '../api/client'
 import AppLayout from '../components/AppLayout'
 import Button from '../components/Button'
 import CanvasPlayer from '../components/CanvasPlayer'
+import StarRating from '../components/StarRating'
 import { PlayerSkeleton } from '../components/Skeleton'
 
 export default function PlayerPage() {
@@ -34,6 +35,10 @@ export default function PlayerPage() {
 
   const [feedbackLoading, setFeedbackLoading] = useState(false)
 
+  // Coach review for this clip (athlete rates it here)
+  const [review, setReview] = useState(null)
+  const [ratingLoading, setRatingLoading] = useState(false)
+
   useEffect(() => {
     async function loadClip() {
       try {
@@ -46,6 +51,14 @@ export default function PlayerPage() {
         setComments(commentsData)
         setSessions(Array.isArray(sessionsData) ? sessionsData : [])
         setSelectedSession(clipData.session_id || '')
+
+        // A completed coach review of this clip → show rating prompt
+        try {
+          const myReviews = await api.get('/reviews/me/athlete')
+          const match = (Array.isArray(myReviews) ? myReviews : [])
+            .find(r => r.clip_id === clipId && r.status === 'complete')
+          if (match) setReview(match)
+        } catch {}
       } catch (err) {
         setError('Failed to load clip')
       } finally {
@@ -54,6 +67,19 @@ export default function PlayerPage() {
     }
     loadClip()
   }, [clipId])
+
+  async function handleRateReview(rating) {
+    if (!review) return
+    setRatingLoading(true)
+    try {
+      const updated = await api.patch(`/reviews/${review.id}/rate`, { rating })
+      setReview(updated)
+    } catch (err) {
+      console.error('Failed to rate review', err)
+    } finally {
+      setRatingLoading(false)
+    }
+  }
 
   // Poll for feedback when clip is processed but feedback hasn't arrived yet
   useEffect(() => {
@@ -302,6 +328,30 @@ export default function PlayerPage() {
                 />
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Coach review rating — when a completed review exists for this clip */}
+        {review && (
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-line bg-surface p-5">
+            <div>
+              <p className="font-display text-sm font-bold uppercase tracking-wide text-text">Coach review</p>
+              <p className="mt-0.5 text-xs text-muted">
+                {review.coach_display_name || 'Your coach'} reviewed this clip — their timeline comments are above.
+              </p>
+            </div>
+            {review.athlete_rating ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted">Your rating:</span>
+                <StarRating value={review.athlete_rating} readonly size="sm" />
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted">Rate this review:</span>
+                <StarRating value={null} size="sm" onChange={handleRateReview} />
+                {ratingLoading && <span className="text-xs text-muted">Saving...</span>}
+              </div>
+            )}
           </div>
         )}
 

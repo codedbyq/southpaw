@@ -10,6 +10,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://localhost:3000",
+        "http://localhost:5174",
         "https://southpaw-beige.vercel.app",
         "https://trysouthpaw.com",
         "https://www.trysouthpaw.com",

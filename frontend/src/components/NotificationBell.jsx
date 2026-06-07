@@ -30,12 +30,18 @@ function timeAgo(dateStr) {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
-export default function NotificationBell() {
+export default function NotificationBell({ placement = 'below' }) {
   const api = useApi()
   const navigate = useNavigate()
   const [notifications, setNotifications] = useState([])
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
+
+  // 'below' → opens under the bell (mobile header); 'right' → opens to the
+  // side, aligned to the bell's bottom (desktop rail).
+  const dropdownPos = placement === 'right'
+    ? 'left-full bottom-0 ml-3'
+    : 'right-0 top-10'
 
   const unread = notifications.filter(n => !n.read).length
 
@@ -97,7 +103,7 @@ export default function NotificationBell() {
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute right-0 top-10 w-80 bg-gray-900 border border-gray-800 rounded-xl shadow-xl z-50 overflow-hidden">
+        <div className={`absolute ${dropdownPos} w-80 bg-surface border border-line rounded-xl shadow-xl z-50 overflow-hidden`}>
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
             <h3 className="text-sm font-semibold text-white">Notifications</h3>
             {notifications.length > 0 && (

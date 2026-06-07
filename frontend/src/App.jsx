@@ -4,9 +4,11 @@ import { useCurrentUser } from './hooks/useCurrentUser'
 import HomePage from './pages/HomePage'
 import OnboardingPage from './pages/OnboardingPage'
 import DashboardPage from './pages/DashboardPage'
+import SessionsListPage from './pages/SessionsListPage'
+import ClipsListPage from './pages/ClipsListPage'
+import ProfilePage from './pages/ProfilePage'
 import PlayerPage from './pages/PlayerPage'
 import SessionPage from './pages/SessionPage'
-import CoachProfilePage from './pages/CoachProfilePage'
 import MarketplacePage from './pages/MarketplacePage'
 import CoachPublicProfilePage from './pages/CoachPublicProfilePage'
 import AdminPage from './pages/AdminPage'
@@ -33,10 +35,28 @@ function App() {
       <Route path="/" element={<HomePage />} />
       <Route path="/onboarding" element={<OnboardingPage />} />
       <Route
-        path="/coach/profile"
+        path="/profile"
         element={
           <ProtectedRoute>
-            <CoachProfilePage />
+            <ProfilePage />
+          </ProtectedRoute>
+        }
+      />
+      {/* Legacy path → unified profile */}
+      <Route path="/coach/profile" element={<Navigate to="/profile" replace />} />
+      <Route
+        path="/sessions"
+        element={
+          <ProtectedRoute>
+            <SessionsListPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/clips"
+        element={
+          <ProtectedRoute>
+            <ClipsListPage />
           </ProtectedRoute>
         }
       />

@@ -1,23 +1,23 @@
-import { useState, useEffect } from 'react'
-import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { UserButton } from '@clerk/react'
-import { LayoutDashboard, Users, Gem, ClipboardList } from 'lucide-react'
+import { LayoutDashboard, LayoutGrid, Film, Users, ClipboardList, User } from 'lucide-react'
 import { useCurrentUser } from '../hooks/useCurrentUser'
-import { useApi } from '../api/client'
 import NotificationBell from './NotificationBell'
 import BuyCreditsModal from './BuyCreditsModal'
+import BottomNav from './BottomNav'
 
 /**
- * Shared app shell — 72px Electric Kiwi icon rail + a slim top utility bar
- * (experience level, admin, plan badge, credits, notifications). Wrap the
- * scrollable content of any signed-in page in <AppLayout active="dashboard">.
- *
- * `active` is the nav key; if omitted it's derived from the current path.
+ * Shared app shell — Electric Kiwi icon rail (desktop) with credits +
+ * notifications + avatar at the bottom, and a slim mobile header + bottom tab
+ * bar on small screens. No top utility bar. Wrap signed-in page content in
+ * <AppLayout active="dashboard">.
  */
 const NAV = [
   { key: 'dashboard',   to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { key: 'marketplace', to: '/coaches',   icon: Users,           label: 'Find a coach' },
-  { key: 'pricing',     to: '/pricing',   icon: Gem,             label: 'Pricing' },
+  { key: 'sessions',    to: '/sessions',  icon: LayoutGrid,      label: 'Sessions' },
+  { key: 'clips',       to: '/clips',     icon: Film,            label: 'Clips' },
+  { key: 'marketplace', to: '/coaches',   icon: Users,           label: 'Coaches' },
 ]
 
 function RailItem({ to, icon: Icon, label, active }) {
@@ -26,9 +26,7 @@ function RailItem({ to, icon: Icon, label, active }) {
       to={to}
       title={label}
       className={`relative flex h-11 w-11 items-center justify-center rounded-xl transition-all ${
-        active
-          ? 'bg-kiwi text-black'
-          : 'text-text3 hover:bg-surface2 hover:text-text'
+        active ? 'bg-kiwi text-black' : 'text-text3 hover:bg-surface2 hover:text-text'
       }`}
     >
       <Icon size={20} strokeWidth={2} />
@@ -37,100 +35,85 @@ function RailItem({ to, icon: Icon, label, active }) {
 }
 
 export default function AppLayout({ active, children }) {
-  const { user, refetch } = useCurrentUser()
-  const api = useApi()
-  const navigate = useNavigate()
+  const { user } = useCurrentUser()
   const location = useLocation()
   const [showBuyCredits, setShowBuyCredits] = useState(false)
-  const [experience, setExperience] = useState('intermediate')
-
-  useEffect(() => {
-    if (user?.experience_level) setExperience(user.experience_level)
-  }, [user?.experience_level])
 
   const current = active || (
+    location.pathname.startsWith('/sessions') ? 'sessions' :
+    location.pathname.startsWith('/clips') ? 'clips' :
     location.pathname.startsWith('/coaches') ? 'marketplace' :
-    location.pathname.startsWith('/pricing') ? 'pricing' :
     location.pathname.startsWith('/reviews') ? 'reviews' :
+    location.pathname.startsWith('/profile') || location.pathname.startsWith('/coach/profile') ? 'profile' :
     'dashboard'
   )
 
   const nav = [...NAV]
   if (user?.user_type === 'coach') {
-    nav.splice(1, 0, { key: 'reviews', to: '/reviews/queue', icon: ClipboardList, label: 'Review queue' })
+    nav.push({ key: 'reviews', to: '/reviews/queue', icon: ClipboardList, label: 'Review queue' })
   }
+  nav.push({ key: 'profile', to: '/profile', icon: User, label: 'Profile' })
 
-  async function handleExperience(e) {
-    const value = e.target.value
-    setExperience(value)
-    try {
-      await api.patch('/users/me', { experience_level: value })
-      refetch()
-    } catch {}
-  }
+  const credits = user?.credits_balance
 
   return (
     <div className="flex h-screen overflow-hidden bg-ink text-text">
-      {/* ── Icon rail ── */}
-      <aside className="flex w-[72px] flex-shrink-0 flex-col items-center gap-2 border-r border-line bg-surface py-5">
+      {/* ── Icon rail (desktop) ── */}
+      <aside className="hidden w-[72px] flex-shrink-0 flex-col items-center gap-2 overflow-y-auto border-r border-line bg-surface py-5 md:flex">
         <Link to="/dashboard" title="Southpaw" className="mb-3 font-display text-2xl font-black tracking-tighter text-kiwi">
           SP
         </Link>
         {nav.map(n => (
           <RailItem key={n.key} {...n} active={current === n.key} />
         ))}
+
         <div className="flex-1" />
-        <div className="flex items-center justify-center">
+
+        {/* Credits */}
+        {user && (
+          <button
+            onClick={() => setShowBuyCredits(true)}
+            title="Credits — tap to buy more"
+            className="flex h-11 w-11 flex-col items-center justify-center rounded-xl text-text3 transition-colors hover:bg-surface2 hover:text-text"
+          >
+            <span className="text-base leading-none text-kiwi">⚡</span>
+            <span className="mt-0.5 font-display text-[11px] font-bold leading-none tabular-nums text-text2">{credits ?? '—'}</span>
+          </button>
+        )}
+        {/* Notifications */}
+        <NotificationBell placement="right" />
+        {/* Avatar / account */}
+        <div className="mt-1 flex items-center justify-center">
           <UserButton />
         </div>
       </aside>
 
       {/* ── Main column ── */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Top utility bar */}
-        <header className="flex h-14 flex-shrink-0 items-center justify-end gap-3 border-b border-line bg-surface/60 px-6">
-          {user?.is_admin && (
-            <button
-              onClick={() => navigate('/admin')}
-              className="font-display text-xs font-bold uppercase tracking-wide text-warning transition-colors hover:text-kiwi"
-            >
-              Admin
-            </button>
-          )}
-          {user && (
-            <select
-              value={experience}
-              onChange={handleExperience}
-              title="Your experience level affects AI feedback tone and standards"
-              className="rounded-lg border border-line2 bg-surface2 px-2.5 py-1.5 text-xs text-text3 focus:border-kiwi focus:outline-none"
-            >
-              <option value="beginner">Beginner</option>
-              <option value="intermediate">Intermediate</option>
-              <option value="advanced">Advanced</option>
-              <option value="pro">Pro</option>
-            </select>
-          )}
-          {user && user.subscription_tier !== 'free' && (
-            <span className={`tag ${user.subscription_tier === 'elite' ? 'tag-gold' : 'tag-success'}`}>
-              {user.subscription_tier === 'elite' ? 'Elite' : 'Pro'}
-            </span>
-          )}
-          {user && (
-            <button
-              onClick={() => setShowBuyCredits(true)}
-              className="flex items-center gap-1.5 rounded-lg bg-surface2 px-3 py-1.5 text-sm text-text2 transition-colors hover:bg-surface3"
-            >
-              <span className="text-kiwi">⚡</span>
-              <span className="font-display font-bold tabular-nums">{user.credits_balance}</span>
-              <span className="text-text3">credits</span>
-            </button>
-          )}
-          <NotificationBell />
+        {/* Mobile header (rail is hidden on small screens) */}
+        <header className="flex h-14 flex-shrink-0 items-center justify-between gap-3 border-b border-line bg-surface/60 px-4 md:hidden">
+          <Link to="/dashboard" className="font-display text-xl font-black tracking-tighter text-kiwi">SP</Link>
+          <div className="flex items-center gap-3">
+            {user && (
+              <button
+                onClick={() => setShowBuyCredits(true)}
+                className="flex items-center gap-1.5 rounded-lg bg-surface2 px-3 py-1.5 text-sm text-text2 transition-colors hover:bg-surface3"
+              >
+                <span className="text-kiwi">⚡</span>
+                <span className="font-display font-bold tabular-nums">{credits ?? '—'}</span>
+              </button>
+            )}
+            <NotificationBell placement="below" />
+            <UserButton />
+          </div>
         </header>
 
-        {/* Scrollable page content */}
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        {/* Scrollable page content — extra bottom padding on mobile for the BottomNav */}
+        <main className="flex-1 overflow-y-auto pb-20 md:pb-0">{children}</main>
       </div>
+
+      {/* ── Mobile bottom tab bar ── */}
+      <BottomNav />
 
       {showBuyCredits && <BuyCreditsModal onClose={() => setShowBuyCredits(false)} />}
     </div>
