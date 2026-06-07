@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Home, LayoutGrid, Users, ClipboardList, User, Plus } from 'lucide-react'
 import { useCurrentUser } from '../hooks/useCurrentUser'
+import UploadModal from './UploadModal'
 
 /**
  * Mobile bottom tab bar (hidden on md+ where the sidebar rail takes over).
@@ -25,6 +27,7 @@ export default function BottomNav() {
   const { user } = useCurrentUser()
   const { pathname } = useLocation()
   const isCoach = user?.user_type === 'coach'
+  const [uploadOpen, setUploadOpen] = useState(false)
 
   const left = [
     { to: '/dashboard', icon: Home, label: 'Home', match: p => p === '/' || p.startsWith('/dashboard') },
@@ -45,14 +48,16 @@ export default function BottomNav() {
 
       {right.map(i => <TabItem key={i.to} {...i} active={i.match(pathname)} />)}
 
-      {/* Upload FAB — raised above the bar */}
-      <Link
-        to="/clips"
+      {/* Upload FAB — raised above the bar, opens the upload modal */}
+      <button
+        onClick={() => setUploadOpen(true)}
         aria-label="Upload clip"
         className="absolute left-1/2 top-0 flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-kiwi text-black shadow-[0_4px_20px_rgba(204,255,0,0.4),0_0_0_4px_rgba(204,255,0,0.08)] transition-transform active:scale-95"
       >
         <Plus size={26} strokeWidth={2.5} />
-      </Link>
+      </button>
+
+      {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
     </nav>
   )
 }

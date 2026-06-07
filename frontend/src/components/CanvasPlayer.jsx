@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react'
 import {
   buildIndex,
   lookupFrame,
@@ -15,7 +15,7 @@ const STRIKE_COLORS = {
   rear_kick:       '#ff9500',
 }
 
-export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick }) {
+function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick }, ref) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const keypointsRef = useRef(null)      // full frames array
@@ -151,6 +151,9 @@ export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTim
       videoRef.current.currentTime = timestamp
     }
   }
+
+  // Let the parent (PlayerPage) seek the video from the side panels
+  useImperativeHandle(ref, () => ({ seekTo }), [])
 
   const filteredStrikes = strikeFilter === 'all'
     ? strikes
@@ -306,3 +309,5 @@ export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTim
     </div>
   )
 }
+
+export default forwardRef(CanvasPlayer)

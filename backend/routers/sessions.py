@@ -72,6 +72,7 @@ class SessionDetailResponse(BaseModel):
     created_at: datetime
     clips: list[ClipResponse]
     metrics: SessionMetrics
+    clip_metrics: dict | None = None  # clip_id → {total_strikes, strikes_per_minute, guard_drop_rate, avg_arm_extension}
     llm_summary: str | None = None
     llm_summary_dirty: bool = True
 
@@ -205,11 +206,12 @@ async def get_session(
     clips = clips_result.scalars().all()
     clip_responses = [await _build_clip_response(clip, db) for clip in clips]
 
-    # Strikes across all jobs for clips in this session
-    job_ids_result = await db.execute(
-        select(Job.id).where(Job.clip_id.in_([c.id for c in clips]))
-    )
-    job_ids = [row[0] for row in job_ids_result.all()]
+    # Strikes across all jobs for clips in this session (with job → clip mapping)
+    job_rows = (await db.execute(
+        select(Job.id, Job.clip_id).where(Job.clip_id.in_([c.id for c in clips]))
+    )).all()
+    job_to_clip = {jid: cid for jid, cid in job_rows}
+    job_ids = list(job_to_clip.keys())
 
     strikes = []
     if job_ids:
@@ -219,6 +221,22 @@ async def get_session(
         strikes = strikes_result.scalars().all()
 
     metrics = _calculate_metrics(clips, strikes)
+
+    # Per-clip metrics (group already-loaded strikes by their clip)
+    strikes_by_clip: dict = {}
+    for st in strikes:
+        cid = job_to_clip.get(st.job_id)
+        if cid is not None:
+            strikes_by_clip.setdefault(cid, []).append(st)
+    clip_metrics = {}
+    for c in clips:
+        cm = _calculate_metrics([c], strikes_by_clip.get(c.id, []))
+        clip_metrics[str(c.id)] = {
+            "total_strikes": cm.total_strikes,
+            "strikes_per_minute": cm.strikes_per_minute,
+            "guard_drop_rate": cm.guard_drop_rate,
+            "avg_arm_extension": cm.avg_arm_extension,
+        }
 
     return SessionDetailResponse(
         id=str(session.id),
@@ -231,6 +249,7 @@ async def get_session(
         created_at=session.created_at,
         clips=clip_responses,
         metrics=metrics,
+        clip_metrics=clip_metrics,
         llm_summary=session.llm_summary,
         llm_summary_dirty=session.llm_summary_dirty,
     )
@@ -268,10 +287,28 @@ async def get_session_analytics(
     head_scores = [c.head_movement_score for c in clips if c.head_movement_score is not None]
     avg_head_movement = round(sum(head_scores) / len(head_scores), 3) if head_scores else None
 
+    # Guard drop rate by strike type (descending — worst offenders first)
+    by_type: dict = {}
+    for st in strikes:
+        if st.guard_dropped is None:
+            continue
+        agg = by_type.setdefault(st.type, {"measured": 0, "dropped": 0})
+        agg["measured"] += 1
+        if st.guard_dropped:
+            agg["dropped"] += 1
+    guard_by_type = sorted(
+        (
+            {"type": t, "guard_drop_pct": round(v["dropped"] / v["measured"] * 100)}
+            for t, v in by_type.items() if v["measured"] > 0
+        ),
+        key=lambda x: -x["guard_drop_pct"],
+    )
+
     return {
         "combos": _aggregate_combos(strikes),
         "fatigue_curve": _compute_fatigue_curve(strikes, total_duration),
         "head_movement_score": avg_head_movement,
+        "guard_by_type": guard_by_type,
     }
 
 
