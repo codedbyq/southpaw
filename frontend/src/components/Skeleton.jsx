@@ -13,7 +13,7 @@ export function SkeletonLine({ width = 'w-full', height = 'h-4', className = '' 
 
 export function StatsBarSkeleton() {
   return (
-    <div className="grid grid-cols-4 gap-3 mb-10">
+    <div className="grid grid-cols-2 gap-3 mb-10 md:grid-cols-4">
       {[...Array(4)].map((_, i) => (
         <div key={i} className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-2">
           <Pulse className="w-6 h-6 rounded" />
