@@ -38,13 +38,14 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-black flex items-center justify-center px-4">
+    <div className="min-h-screen bg-ink flex items-center justify-center px-4">
       <div className="w-full max-w-lg">
 
         {/* Header */}
         <div className="text-center mb-10">
-          <h1 className="text-3xl font-bold text-white mb-2">Welcome to Southpaw</h1>
-          <p className="text-gray-400">How will you be using the platform?</p>
+          <p className="font-display text-2xl font-black uppercase tracking-tighter text-kiwi mb-4">Southpaw</p>
+          <h1 className="font-display text-[32px] font-extrabold uppercase tracking-wide text-text mb-2">Welcome</h1>
+          <p className="text-text3">How will you be using the platform?</p>
         </div>
 
         {/* Options */}
@@ -53,29 +54,29 @@ export default function OnboardingPage() {
             <button
               key={option.value}
               onClick={() => setSelected(option.value)}
-              className={`flex flex-col items-center text-center p-8 rounded-xl border transition-all h-56 ${
+              className={`flex flex-col items-center text-center p-8 rounded-2xl border transition-all h-56 ${
                 selected === option.value
-                  ? 'border-indigo-500 bg-indigo-950'
-                  : 'border-gray-800 bg-gray-900 hover:border-gray-600'
+                  ? 'border-kiwi bg-kiwi/8'
+                  : 'border-line bg-surface hover:border-line2'
               }`}
             >
               <span className="text-4xl mb-4">{option.icon}</span>
-              <p className="font-semibold text-white text-lg mb-2">{option.label}</p>
-              <p className="text-sm text-gray-400 leading-relaxed">{option.description}</p>
+              <p className="font-display font-extrabold uppercase tracking-wide text-text text-lg mb-2">{option.label}</p>
+              <p className="text-sm text-text3 leading-relaxed">{option.description}</p>
             </button>
           ))}
         </div>
 
         {/* Error */}
         {error && (
-          <p className="text-red-400 text-sm text-center mb-4">{error}</p>
+          <p className="text-danger text-sm text-center mb-4">{error}</p>
         )}
 
         {/* Continue button */}
         <button
           onClick={handleContinue}
           disabled={!selected || saving}
-          className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="btn btn-primary w-full py-3 rounded-xl"
         >
           {saving ? 'Saving...' : 'Continue'}
         </button>

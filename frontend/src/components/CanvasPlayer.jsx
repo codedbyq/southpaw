@@ -6,12 +6,13 @@ import {
   findClosestSkeleton
 } from '../utils/skeletonRenderer'
 
+// Electric Kiwi strike data-viz ramp — punches glow lime/green, kicks burn orange
 const STRIKE_COLORS = {
-  jab:             '#818cf8',
-  cross:           '#a78bfa',
-  hook:            '#f472b6',
-  roundhouse_kick: '#fb923c',
-  rear_kick:       '#facc15',
+  jab:             '#ccff00',
+  cross:           '#dfff00',
+  hook:            '#88ff00',
+  roundhouse_kick: '#ff6b00',
+  rear_kick:       '#ff9500',
 }
 
 export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick }) {
@@ -160,7 +161,7 @@ export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTim
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-red-400 text-sm">{error}</p>
+        <p className="text-danger text-sm">{error}</p>
       </div>
     )
   }
@@ -168,7 +169,7 @@ export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTim
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-gray-400 text-sm">Loading pose data...</p>
+        <p className="text-text3 text-sm animate-pulse">Loading pose data...</p>
       </div>
     )
   }
@@ -176,9 +177,9 @@ export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTim
   return (
     <div className="flex flex-col gap-4">
 
-      {/* Video + Canvas stack */}
-      <div className="relative w-full bg-black rounded-xl overflow-hidden"
-           style={{ aspectRatio: '16/9' }}>
+      {/* Video + Canvas stack — radial-vignette black stage */}
+      <div className="relative w-full rounded-2xl overflow-hidden"
+           style={{ aspectRatio: '16/9', background: 'radial-gradient(ellipse at 40% 35%, #1a1a1a 0%, #050505 70%)' }}>
         <video
           ref={videoRef}
           src={videoUrl}
@@ -196,12 +197,12 @@ export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTim
 
       {/* Controls row */}
       <div className="flex items-center gap-4 flex-wrap">
-        <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none">
+        <label className="flex items-center gap-2 text-sm text-text3 cursor-pointer select-none">
           <input
             type="checkbox"
             checked={showLabels}
             onChange={e => setShowLabels(e.target.checked)}
-            className="rounded"
+            className="rounded accent-kiwi"
           />
           Show strike labels
         </label>
@@ -210,11 +211,7 @@ export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTim
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setStrikeFilter('all')}
-            className={`text-xs px-3 py-1 rounded-full border transition-colors ${
-              strikeFilter === 'all'
-                ? 'bg-white text-gray-950 border-white'
-                : 'border-gray-700 text-gray-400 hover:border-gray-500'
-            }`}
+            className={`chip ${strikeFilter === 'all' ? 'active' : ''}`}
           >
             All ({strikes.length})
           </button>
@@ -222,13 +219,9 @@ export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTim
             <button
               key={type}
               onClick={() => setStrikeFilter(type)}
-              className={`text-xs px-3 py-1 rounded-full border transition-colors ${
-                strikeFilter === type
-                  ? 'border-transparent text-white'
-                  : 'border-gray-700 text-gray-400 hover:border-gray-500'
-              }`}
+              className="chip"
               style={strikeFilter === type
-                ? { backgroundColor: STRIKE_COLORS[type], borderColor: STRIKE_COLORS[type] }
+                ? { backgroundColor: STRIKE_COLORS[type], borderColor: STRIKE_COLORS[type], color: '#000' }
                 : {}
               }
             >
@@ -241,23 +234,23 @@ export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTim
       {/* Strike timeline */}
       {duration > 0 && (
         <div className="flex flex-col gap-2">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">
+          <p className="text-xs text-muted uppercase tracking-wide font-semibold">
             Strike timeline — click to jump
           </p>
           <div className="relative w-full">
-            {/* Comment markers above the bar */}
+            {/* Comment markers above the bar — gold coach dots */}
             {comments.filter(c => c.timestamp_seconds != null).map(c => (
               <div
                 key={c.id}
-                className="absolute -top-2 w-2 h-2 rounded-full bg-yellow-400 border border-yellow-600 cursor-pointer hover:scale-125 transition-transform"
-                style={{ left: `calc(${(c.timestamp_seconds / duration) * 100}% - 4px)` }}
+                className="absolute -top-2 w-2.5 h-2.5 rounded-full bg-gold cursor-pointer hover:scale-125 transition-transform shadow-[0_0_6px_rgba(255,215,0,0.6)] z-10"
+                style={{ left: `calc(${(c.timestamp_seconds / duration) * 100}% - 5px)` }}
                 onClick={() => seekTo(c.timestamp_seconds)}
                 title={`${c.author_name}: ${c.body}`}
               />
             ))}
 
             <div
-              className="relative w-full h-8 bg-gray-900 rounded-lg overflow-hidden cursor-pointer"
+              className="relative w-full h-8 bg-surface3 rounded-lg overflow-hidden cursor-pointer"
               onClick={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect()
                 const pct = (e.clientX - rect.left) / rect.width
@@ -266,9 +259,9 @@ export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTim
                 if (onTimeClick) onTimeClick(t)
               }}
             >
-              {/* Playhead */}
+              {/* Playhead — lime with glow */}
               <div
-                className="absolute top-0 bottom-0 w-0.5 bg-white opacity-60 pointer-events-none"
+                className="absolute top-0 bottom-0 w-0.5 bg-kiwi pointer-events-none shadow-[0_0_8px_rgba(204,255,0,0.8)]"
                 style={{ left: `${(currentTime / duration) * 100}%` }}
               />
 
@@ -302,8 +295,8 @@ export default function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTim
                 className="w-2.5 h-2.5 rounded-full"
                 style={{ backgroundColor: STRIKE_COLORS[type] }}
               />
-              <span className="text-xs text-gray-400">
-                {strikes.filter(s => s.type === type).length} {type.replace('_', ' ')}
+              <span className="text-xs text-text3">
+                <span className="font-display font-bold tabular-nums text-text">{strikes.filter(s => s.type === type).length}</span> {type.replace('_', ' ')}
               </span>
             </div>
           ))}

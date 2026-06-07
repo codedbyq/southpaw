@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useApi } from '../api/client'
+import AppLayout from '../components/AppLayout'
+import Button from '../components/Button'
 import CanvasPlayer from '../components/CanvasPlayer'
-import NotificationBell from '../components/NotificationBell'
 import { PlayerSkeleton } from '../components/Skeleton'
 
 export default function PlayerPage() {
@@ -138,21 +139,19 @@ export default function PlayerPage() {
   }
 
   if (loading) return (
-    <div className="min-h-screen bg-gray-950">
-      <nav className="flex items-center gap-4 px-6 py-4 border-b border-gray-800">
-        <div className="w-12 h-4 bg-gray-800 animate-pulse rounded" />
-        <div className="flex-1 h-4 bg-gray-800 animate-pulse rounded max-w-xs" />
-      </nav>
-      <main className="max-w-5xl mx-auto px-6 py-8">
+    <AppLayout active="dashboard">
+      <main className="max-w-5xl mx-auto px-8 py-8">
         <PlayerSkeleton />
       </main>
-    </div>
+    </AppLayout>
   )
 
   if (error || !clip) return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-      <p className="text-red-400 text-sm">{error || 'Clip not found'}</p>
-    </div>
+    <AppLayout active="dashboard">
+      <div className="flex h-full items-center justify-center">
+        <p className="text-danger text-sm">{error || 'Clip not found'}</p>
+      </div>
+    </AppLayout>
   )
 
   const isProcessed = clip.job?.status === 'complete'
@@ -160,35 +159,35 @@ export default function PlayerPage() {
   const generalComments = comments.filter(c => c.timestamp_seconds == null)
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <nav className="flex items-center gap-4 px-6 py-4 border-b border-gray-800">
-        <button
-          onClick={() => navigate(-1)}
-          className="text-gray-400 hover:text-white transition-colors text-sm flex-shrink-0"
-        >
-          ← Back
-        </button>
-        <div className="flex-1 min-w-0 flex items-center gap-3">
-          <span className="font-medium text-sm text-gray-300 truncate">{clip.filename}</span>
-          {/* Session picker */}
-          <select
-            value={selectedSession}
-            onChange={e => handleMoveSession(e.target.value)}
-            disabled={movingSession}
-            className="text-xs px-2.5 py-1 bg-gray-800 border border-gray-700 text-gray-400 rounded-lg focus:outline-none focus:border-indigo-500 disabled:opacity-50 max-w-[200px] truncate"
+    <AppLayout active="dashboard">
+      <main className="max-w-5xl mx-auto px-8 py-8 space-y-8">
+        {/* Sub-header: back + filename + session picker */}
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate(-1)}
+            className="text-muted hover:text-text transition-colors text-sm flex-shrink-0"
           >
-            <option value="">Unorganized</option>
-            {sessions.filter(s => s.sport === clip.sport).map(s => (
-              <option key={s.id} value={s.id}>
-                {s.label || `${s.session_type || 'Session'}`}
-              </option>
-            ))}
-          </select>
+            ← Back
+          </button>
+          <div className="flex-1 min-w-0 flex items-center gap-3">
+            <span className="font-display font-bold text-lg text-text truncate">{clip.filename}</span>
+            {/* Session picker */}
+            <select
+              value={selectedSession}
+              onChange={e => handleMoveSession(e.target.value)}
+              disabled={movingSession}
+              className="input w-auto max-w-[200px] truncate py-1 text-xs"
+            >
+              <option value="">Unorganized</option>
+              {sessions.filter(s => s.sport === clip.sport).map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.label || `${s.session_type || 'Session'}`}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        <NotificationBell />
-      </nav>
 
-      <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
         <CanvasPlayer
           videoUrl={clip.video_url}
           resultUrl={clip.result_url}
@@ -197,13 +196,13 @@ export default function PlayerPage() {
         />
 
         {/* Clip notes */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+        <div className="bg-surface border border-line rounded-2xl p-4">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">What were you working on?</p>
+            <p className="text-xs font-display font-bold text-muted uppercase tracking-wide">What were you working on?</p>
             {!editingNotes && (
               <button
                 onClick={() => { setNotesValue(clip.notes || ''); setEditingNotes(true) }}
-                className="text-xs text-gray-500 hover:text-white transition-colors"
+                className="text-xs text-muted hover:text-text transition-colors"
               >
                 {clip.notes ? 'Edit' : '+ Add note'}
               </button>
@@ -217,38 +216,34 @@ export default function PlayerPage() {
                 placeholder="e.g. Drilling hooks, working on guard after the jab..."
                 rows={2}
                 autoFocus
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
+                className="input resize-none"
               />
               <div className="flex gap-2">
-                <button onClick={handleSaveNotes} disabled={savingNotes}
-                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs rounded-lg transition-colors">
+                <Button size="sm" onClick={handleSaveNotes} disabled={savingNotes}>
                   {savingNotes ? 'Saving...' : 'Save'}
-                </button>
-                <button onClick={() => setEditingNotes(false)}
-                  className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded-lg transition-colors">
-                  Cancel
-                </button>
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => setEditingNotes(false)}>Cancel</Button>
               </div>
             </div>
           ) : (
-            <p className="text-sm text-gray-400">
-              {clip.notes || <span className="text-gray-600 italic">No notes — add context to improve AI feedback</span>}
+            <p className="text-sm text-text3">
+              {clip.notes || <span className="text-muted italic">No notes — add context to improve AI feedback</span>}
             </p>
           )}
         </div>
 
         {/* Comment input */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+        <div className="bg-surface border border-line rounded-2xl p-4">
           <form onSubmit={handleSubmitComment} className="flex flex-col gap-3">
             {commentTimestamp != null && (
               <div className="flex items-center gap-2">
-                <span className="text-xs text-yellow-400">
+                <span className="text-xs text-gold">
                   📍 {commentTimestamp.toFixed(1)}s
                 </span>
                 <button
                   type="button"
                   onClick={() => setCommentTimestamp(null)}
-                  className="text-xs text-gray-500 hover:text-white"
+                  className="text-xs text-muted hover:text-text"
                 >
                   × remove timestamp
                 </button>
@@ -264,22 +259,16 @@ export default function PlayerPage() {
                   ? `Comment at ${commentTimestamp.toFixed(1)}s...`
                   : 'Add a general comment... or click the timeline to pin to a moment'
                 }
-                className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                className="input flex-1"
               />
-              <button
-                type="submit"
-                disabled={!commentBody.trim() || submitting}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-sm font-medium rounded-lg transition-colors"
-              >
-                Post
-              </button>
+              <Button type="submit" disabled={!commentBody.trim() || submitting}>Post</Button>
             </div>
           </form>
         </div>
 
         {/* Empty comments state */}
         {comments.length === 0 && (
-          <div className="text-center py-6 text-gray-600 text-sm">
+          <div className="text-center py-6 text-muted text-sm">
             No comments yet — click the timeline to pin feedback to a moment, or type a general note above.
           </div>
         )}
@@ -287,7 +276,7 @@ export default function PlayerPage() {
         {/* Timestamped comments */}
         {timestampedComments.length > 0 && (
           <div>
-            <h3 className="text-sm font-medium text-gray-400 mb-3">Timeline comments</h3>
+            <h3 className="text-sm font-display font-bold uppercase tracking-wide text-muted mb-3">Timeline comments</h3>
             <div className="flex flex-col gap-2">
               {timestampedComments.map(c => (
                 <CommentRow
@@ -303,7 +292,7 @@ export default function PlayerPage() {
         {/* General comments */}
         {generalComments.length > 0 && (
           <div>
-            <h3 className="text-sm font-medium text-gray-400 mb-3">General comments</h3>
+            <h3 className="text-sm font-display font-bold uppercase tracking-wide text-muted mb-3">General comments</h3>
             <div className="flex flex-col gap-2">
               {generalComments.map(c => (
                 <CommentRow
@@ -319,43 +308,47 @@ export default function PlayerPage() {
         {/* Coaching feedback */}
         {isProcessed && clip.feedback && (
           <div>
-            <h2 className="text-lg font-semibold mb-4">Coaching feedback</h2>
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 text-sm text-gray-300 leading-relaxed">
+            <h2 className="text-lg font-display font-extrabold uppercase tracking-wide text-text mb-4">Coaching feedback</h2>
+            <div className="relative overflow-hidden bg-surface border border-line rounded-2xl p-5 text-sm text-text2 leading-relaxed">
+              <span className="absolute inset-y-0 left-0 w-[3px] bg-kiwi" />
+              <div className="flex items-center gap-2 mb-3 text-[11px] font-bold uppercase tracking-wider text-kiwi">
+                <span className="w-1.5 h-1.5 rounded-full bg-kiwi animate-ai-pulse" /> AI Feedback
+              </div>
               {renderFeedback(clip.feedback)}
             </div>
           </div>
         )}
         {isProcessed && !clip.feedback && feedbackLoading && (
           <div>
-            <h2 className="text-lg font-semibold mb-4">Coaching feedback</h2>
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 text-sm text-gray-400 flex items-center gap-3">
-              <span className="inline-block w-4 h-4 border-2 border-gray-600 border-t-yellow-400 rounded-full animate-spin" />
+            <h2 className="text-lg font-display font-extrabold uppercase tracking-wide text-text mb-4">Coaching feedback</h2>
+            <div className="bg-surface border border-line rounded-2xl p-5 text-sm text-text3 flex items-center gap-3">
+              <span className="inline-block w-4 h-4 border-2 border-line2 border-t-kiwi rounded-full animate-spin" />
               Analyzing your technique...
             </div>
           </div>
         )}
       </main>
-    </div>
+    </AppLayout>
   )
 }
 
 
 function CommentRow({ comment, onDelete }) {
   return (
-    <div className="flex items-start gap-3 p-3 bg-gray-900 border border-gray-800 rounded-lg">
+    <div className="flex items-start gap-3 p-3 bg-surface border border-line rounded-xl hover:border-gold/60 transition-colors">
       {comment.timestamp_seconds != null && (
-        <span className="text-xs text-yellow-400 font-mono mt-0.5 flex-shrink-0">
+        <span className="text-xs text-gold font-display font-bold mt-0.5 flex-shrink-0 tabular-nums">
           {comment.timestamp_seconds.toFixed(1)}s
         </span>
       )}
       <div className="flex-1 min-w-0">
-        <span className="text-xs text-gray-500 mr-2">{comment.author_name}</span>
-        <span className="text-sm text-gray-300">{comment.body}</span>
+        <span className="text-xs text-muted mr-2">{comment.author_name}</span>
+        <span className="text-sm text-text2">{comment.body}</span>
       </div>
       {comment.is_own && (
         <button
           onClick={onDelete}
-          className="text-xs text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
+          className="text-xs text-muted hover:text-danger transition-colors flex-shrink-0"
         >
           delete
         </button>
@@ -371,13 +364,13 @@ function renderFeedback(text) {
     const isBold = line.startsWith('**') && line.includes('**', 2)
     if (isBold) {
       const inner = line.replace(/^\*\*/, '').replace(/\*\*$/, '')
-      return <p key={i} className="font-semibold text-white mt-3 first:mt-0">{inner}</p>
+      return <p key={i} className="font-display font-bold uppercase tracking-wide text-text mt-3 first:mt-0">{inner}</p>
     }
     const parts = line.split(/\*\*(.*?)\*\*/g)
     return (
-      <p key={i} className="text-gray-300">
+      <p key={i} className="text-text2">
         {parts.map((part, j) =>
-          j % 2 === 1 ? <strong key={j} className="text-white">{part}</strong> : part
+          j % 2 === 1 ? <strong key={j} className="text-kiwi font-semibold">{part}</strong> : part
         )}
       </p>
     )

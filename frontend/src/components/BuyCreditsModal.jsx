@@ -53,8 +53,8 @@ export default function BuyCreditsModal({ onClose }) {
                     onClick={() => setSelected(pack.id)}
                     className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${
                       selected === pack.id
-                        ? 'border-indigo-500 bg-indigo-950'
-                        : 'border-gray-800 hover:border-gray-600'
+                        ? 'border-kiwi bg-kiwi/8'
+                        : 'border-line hover:border-line2'
                     }`}
                   >
                     <div className="text-left">
@@ -76,13 +76,13 @@ export default function BuyCreditsModal({ onClose }) {
                 Credits never expire · Secure payment via Stripe
               </div>
 
-              {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+              {error && <p className="text-danger text-sm text-center">{error}</p>}
 
               {/* CTA */}
               <button
                 onClick={handleCheckout}
                 disabled={redirecting || !selectedPack}
-                className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold rounded-xl transition-colors"
+                className="btn btn-primary w-full py-3 rounded-xl"
               >
                 {redirecting
                   ? 'Redirecting to Stripe...'

@@ -49,3 +49,8 @@ frontend/*.local
 *.sln
 *.sw?
 CONTEXT.md
+# Build output
+frontend/dist/
+
+# Claude Code local config
+.claude/

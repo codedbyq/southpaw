@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { UserButton } from '@clerk/react'
 import { useApi } from '../api/client'
-
-const FEATURE_ICONS = { '✓': true }
+import AppLayout from '../components/AppLayout'
+import Button from '../components/Button'
 
 export default function PricingPage() {
   const api = useApi()
@@ -52,7 +51,7 @@ export default function PricingPage() {
       name: 'Free',
       price: '$0',
       period: 'forever',
-      credits: '5 credits/month',
+      credits: '5 credits / mo',
       features: [
         '3 clips per month',
         '5 credits / month',
@@ -68,8 +67,8 @@ export default function PricingPage() {
       id: 'pro',
       name: 'Pro',
       price: '$12',
-      period: '/month',
-      credits: '25 credits/month',
+      period: '/ month',
+      credits: '25 credits / mo',
       features: [
         'Unlimited clips',
         '25 credits / month',
@@ -86,8 +85,8 @@ export default function PricingPage() {
       id: 'elite',
       name: 'Elite',
       price: '$29',
-      period: '/month',
-      credits: '75 credits/month',
+      period: '/ month',
+      credits: '75 credits / mo',
       features: [
         'Everything in Pro',
         '75 credits / month',
@@ -95,28 +94,21 @@ export default function PricingPage() {
         'DeepSeek R1 reasoning model',
         'Best credit rate (save 46%)',
       ],
-      cta: 'Upgrade to Elite',
+      cta: 'Go Elite',
       highlight: false,
     },
   ]
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
-        <button onClick={() => navigate('/dashboard')} className="text-sm text-gray-400 hover:text-white transition-colors">
-          ← Dashboard
-        </button>
-        <span className="font-bold text-lg tracking-tight">Southpaw</span>
-        <UserButton />
-      </nav>
-
-      <main className="max-w-5xl mx-auto px-6 py-16">
-        <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold text-white mb-3">Simple, transparent pricing</h1>
-          <p className="text-gray-400">Credits never expire. Cancel anytime.</p>
+    <AppLayout active="pricing">
+      <div className="mx-auto max-w-5xl px-8 py-16">
+        <div className="mb-12 text-center">
+          <p className="font-display text-[13px] font-semibold uppercase tracking-[0.13em] text-muted">Membership</p>
+          <h1 className="mt-2 font-display text-[42px] font-extrabold leading-none text-text">Train like a pro</h1>
+          <p className="mt-3 text-text3">Credits roll over month to month. Cancel anytime.</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+        <div className="mb-10 grid grid-cols-1 gap-5 md:grid-cols-3">
           {tiers.map(tier => {
             const isCurrent = currentTier === tier.id
             const isDowngrade = (currentTier === 'elite' && tier.id === 'pro') ||
@@ -125,33 +117,34 @@ export default function PricingPage() {
             return (
               <div
                 key={tier.id}
-                className={`relative flex flex-col rounded-2xl border p-6 ${
+                className={`relative flex flex-col overflow-hidden rounded-[20px] border p-7 ${
                   tier.highlight
-                    ? 'border-indigo-500 bg-indigo-950/30'
-                    : 'border-gray-800 bg-gray-900'
+                    ? 'border-kiwi bg-surface shadow-[0_0_32px_rgba(204,255,0,0.08)]'
+                    : 'border-line bg-surface'
                 }`}
               >
+                {tier.highlight && <span className="absolute inset-x-6 top-0 h-0.5 bg-kiwi" />}
                 {tier.highlight && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                    <span className="text-xs px-3 py-1 bg-indigo-600 text-white rounded-full font-medium">
+                    <span className="rounded-full bg-kiwi px-3.5 py-1 font-display text-xs font-extrabold uppercase tracking-wide text-black">
                       Most popular
                     </span>
                   </div>
                 )}
 
                 <div className="mb-6">
-                  <h2 className="text-lg font-bold text-white mb-1">{tier.name}</h2>
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-3xl font-bold text-white">{tier.price}</span>
-                    <span className="text-gray-500 text-sm">{tier.period}</span>
+                  <h2 className="font-display text-[22px] font-extrabold uppercase tracking-wide text-text">{tier.name}</h2>
+                  <div className="mt-1 flex items-baseline gap-1">
+                    <span className="font-display text-5xl font-black leading-none tracking-tighter text-text">{tier.price}</span>
+                    <span className="text-sm text-muted">{tier.period}</span>
                   </div>
-                  <p className="text-xs text-indigo-400 mt-1">{tier.credits}</p>
+                  <p className="mt-1.5 font-display text-sm font-bold uppercase tracking-wide text-kiwi">{tier.credits}</p>
                 </div>
 
-                <ul className="space-y-2.5 mb-8 flex-1">
+                <ul className="mb-7 flex flex-1 flex-col gap-3">
                   {tier.features.map((f, i) => (
-                    <li key={i} className="flex items-start gap-2 text-sm text-gray-300">
-                      <span className="text-green-400 mt-0.5 flex-shrink-0">✓</span>
+                    <li key={i} className="flex items-start gap-2.5 text-sm text-text2">
+                      <span className="mt-0.5 flex-shrink-0 font-bold text-kiwi">✓</span>
                       {f}
                     </li>
                   ))}
@@ -159,51 +152,44 @@ export default function PricingPage() {
 
                 {isCurrent ? (
                   <div className="space-y-2">
-                    <div className="w-full py-2.5 bg-gray-800 text-gray-400 text-sm font-medium rounded-xl text-center">
+                    <div className="w-full rounded-xl bg-surface2 py-2.5 text-center font-display text-sm font-bold uppercase tracking-wide text-muted">
                       Current plan
                     </div>
                     {currentTier !== 'free' && (
                       <button
                         onClick={handleManage}
                         disabled={loading === 'manage'}
-                        className="w-full py-2 text-xs text-gray-500 hover:text-white transition-colors"
+                        className="w-full py-2 text-xs text-muted transition-colors hover:text-text"
                       >
                         {loading === 'manage' ? 'Loading...' : 'Manage or cancel →'}
                       </button>
                     )}
                   </div>
                 ) : isDowngrade ? (
-                  <button
-                    onClick={handleManage}
-                    disabled={!!loading}
-                    className="w-full py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-sm font-medium rounded-xl transition-colors disabled:opacity-50"
-                  >
+                  <Button variant="secondary" onClick={handleManage} disabled={!!loading} className="w-full">
                     Manage plan
-                  </button>
+                  </Button>
                 ) : (
-                  <button
+                  <Button
+                    variant={tier.highlight ? 'primary' : 'outline'}
                     onClick={() => handleSubscribe(tier.id)}
                     disabled={!!loading}
-                    className={`w-full py-2.5 text-sm font-medium rounded-xl transition-colors disabled:opacity-50 ${
-                      tier.highlight
-                        ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                        : 'bg-gray-800 hover:bg-gray-700 text-white'
-                    }`}
+                    className="w-full"
                   >
                     {loading === tier.id ? 'Redirecting...' : tier.cta}
-                  </button>
+                  </Button>
                 )}
               </div>
             )
           })}
         </div>
 
-        {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+        {error && <p className="text-center text-sm text-danger">{error}</p>}
 
-        <p className="text-center text-xs text-gray-600">
+        <p className="text-center text-xs text-muted">
           Secure payment via Stripe · Credits roll over month to month · Cancel anytime from your account
         </p>
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   )
 }

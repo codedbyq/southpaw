@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useApi } from '../api/client'
+import Button from './Button'
 
 export default function RequestReviewModal({ coach, currentUser, onClose, onSuccess }) {
   const api = useApi()
@@ -60,25 +61,25 @@ export default function RequestReviewModal({ coach, currentUser, onClose, onSucc
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col">
+      <div className="bg-surface border border-line rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col">
 
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-gray-800">
+        <div className="flex items-center justify-between p-5 border-b border-line">
           <div>
-            <h2 className="font-semibold text-white">Request a review</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <h2 className="font-display font-extrabold uppercase tracking-wide text-text">Request a review</h2>
+            <p className="text-xs text-muted mt-0.5">
               from {coach.display_name || 'Coach'} · {coach.credit_rate} credits
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-xl leading-none">×</button>
+          <button onClick={onClose} className="text-muted hover:text-text text-xl leading-none">×</button>
         </div>
 
         {/* Credits check */}
         {currentUser && (
           <div className={`mx-5 mt-4 px-4 py-2.5 rounded-lg text-sm flex items-center justify-between ${
-            canAfford ? 'bg-gray-800 text-gray-300' : 'bg-red-950 border border-red-800 text-red-400'
+            canAfford ? 'bg-surface2 text-text2' : 'bg-danger/10 border border-danger/40 text-danger'
           }`}>
-            <span>Your balance: <span className="font-medium text-white">{currentUser.credits_balance} credits</span></span>
+            <span>Your balance: <span className="font-medium text-text">{currentUser.credits_balance} credits</span></span>
             {!canAfford && <span>Insufficient credits</span>}
           </div>
         )}
@@ -93,11 +94,7 @@ export default function RequestReviewModal({ coach, currentUser, onClose, onSucc
               <button
                 key={t.key}
                 onClick={() => { setTab(t.key); setSelectedClip(null); setSelectedSession(null) }}
-                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  tab === t.key
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-gray-800 text-gray-400 hover:text-white'
-                }`}
+                className={`chip ${tab === t.key ? 'active' : ''}`}
               >
                 {t.label}
               </button>
@@ -107,7 +104,7 @@ export default function RequestReviewModal({ coach, currentUser, onClose, onSucc
 
         {/* Preference hint when not "either" */}
         {!showBothTabs && (
-          <p className="px-5 pt-4 text-xs text-gray-500">
+          <p className="px-5 pt-4 text-xs text-muted">
             {coach.review_preference === 'clip'
               ? '📎 This coach prefers individual clip reviews'
               : '📁 This coach prefers full session reviews'}
@@ -116,15 +113,15 @@ export default function RequestReviewModal({ coach, currentUser, onClose, onSucc
 
         {/* List */}
         <div className="flex-1 overflow-y-auto p-5">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">
+          <p className="text-xs text-muted uppercase tracking-wide mb-3">
             {tab === 'clip' ? 'Select a clip' : 'Select a session'}
           </p>
 
           {loading ? (
-            <p className="text-gray-500 text-sm">Loading...</p>
+            <p className="text-muted text-sm">Loading...</p>
           ) : tab === 'clip' ? (
             clips.length === 0 ? (
-              <p className="text-gray-500 text-sm">No processed clips yet.</p>
+              <p className="text-muted text-sm">No processed clips yet.</p>
             ) : (
               <div className="flex flex-col gap-2">
                 {clips.map(clip => (
@@ -133,25 +130,25 @@ export default function RequestReviewModal({ coach, currentUser, onClose, onSucc
                     onClick={() => setSelectedClip(clip)}
                     className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${
                       selectedClip?.id === clip.id
-                        ? 'border-indigo-500 bg-indigo-950'
-                        : 'border-gray-800 hover:border-gray-600'
+                        ? 'border-kiwi bg-kiwi/8'
+                        : 'border-line hover:border-line2'
                     }`}
                   >
-                    <div className="w-14 h-10 rounded-lg bg-gray-800 flex-shrink-0 overflow-hidden">
+                    <div className="w-14 h-10 rounded-lg bg-surface3 flex-shrink-0 overflow-hidden">
                       {clip.thumbnail_url
                         ? <img src={clip.thumbnail_url} alt="" className="w-full h-full object-cover" />
-                        : <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">🎬</div>
+                        : <div className="w-full h-full flex items-center justify-center text-muted text-xs">🎬</div>
                       }
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white truncate">{clip.filename}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">
+                      <p className="text-sm text-text truncate">{clip.filename}</p>
+                      <p className="text-xs text-muted mt-0.5">
                         {clip.sport} · {new Date(clip.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                       </p>
                     </div>
                     {selectedClip?.id === clip.id && (
-                      <div className="w-4 h-4 rounded-full bg-indigo-500 flex items-center justify-center flex-shrink-0">
-                        <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                      <div className="w-4 h-4 rounded-full bg-kiwi flex items-center justify-center flex-shrink-0">
+                        <div className="w-1.5 h-1.5 rounded-full bg-black" />
                       </div>
                     )}
                   </button>
@@ -160,7 +157,7 @@ export default function RequestReviewModal({ coach, currentUser, onClose, onSucc
             )
           ) : (
             sessions.length === 0 ? (
-              <p className="text-gray-500 text-sm">No sessions yet. Create a session first.</p>
+              <p className="text-muted text-sm">No sessions yet. Create a session first.</p>
             ) : (
               <div className="flex flex-col gap-2">
                 {sessions.map(session => (
@@ -169,22 +166,22 @@ export default function RequestReviewModal({ coach, currentUser, onClose, onSucc
                     onClick={() => setSelectedSession(session)}
                     className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${
                       selectedSession?.id === session.id
-                        ? 'border-indigo-500 bg-indigo-950'
-                        : 'border-gray-800 hover:border-gray-600'
+                        ? 'border-kiwi bg-kiwi/8'
+                        : 'border-line hover:border-line2'
                     }`}
                   >
-                    <div className="w-10 h-10 rounded-lg bg-gray-800 flex-shrink-0 flex items-center justify-center text-xl">
+                    <div className="w-10 h-10 rounded-lg bg-surface3 flex-shrink-0 flex items-center justify-center text-xl">
                       📁
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white truncate">{session.label || 'Untitled session'}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">
+                      <p className="text-sm text-text truncate">{session.label || 'Untitled session'}</p>
+                      <p className="text-xs text-muted mt-0.5">
                         {session.sport} · {session.clip_count ?? 0} clip{session.clip_count !== 1 ? 's' : ''} · {new Date(session.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                       </p>
                     </div>
                     {selectedSession?.id === session.id && (
-                      <div className="w-4 h-4 rounded-full bg-indigo-500 flex items-center justify-center flex-shrink-0">
-                        <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                      <div className="w-4 h-4 rounded-full bg-kiwi flex items-center justify-center flex-shrink-0">
+                        <div className="w-1.5 h-1.5 rounded-full bg-black" />
                       </div>
                     )}
                   </button>
@@ -196,7 +193,7 @@ export default function RequestReviewModal({ coach, currentUser, onClose, onSucc
           {/* Note */}
           {hasSelection && (
             <div className="mt-4">
-              <label className="text-xs text-gray-500 uppercase tracking-wide mb-2 block">
+              <label className="text-xs text-muted uppercase tracking-wide mb-2 block">
                 Note for coach (optional)
               </label>
               <textarea
@@ -204,27 +201,20 @@ export default function RequestReviewModal({ coach, currentUser, onClose, onSucc
                 onChange={e => setNote(e.target.value)}
                 placeholder="e.g. Focus on my guard discipline in the second round..."
                 rows={2}
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
+                className="input resize-none"
               />
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div className="p-5 border-t border-gray-800 flex items-center justify-between gap-3">
-          {error && <p className="text-red-400 text-xs flex-1">{error}</p>}
+        <div className="p-5 border-t border-line flex items-center justify-between gap-3">
+          {error && <p className="text-danger text-xs flex-1">{error}</p>}
           <div className="flex gap-2 ml-auto">
-            <button onClick={onClose}
-              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">
-              Cancel
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={!hasSelection || !canAfford || submitting}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
-            >
+            <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+            <Button size="sm" onClick={handleSubmit} disabled={!hasSelection || !canAfford || submitting}>
               {submitting ? 'Sending...' : `Send · ${coach.credit_rate} credits`}
-            </button>
+            </Button>
           </div>
         </div>
 

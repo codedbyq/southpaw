@@ -18,16 +18,17 @@ const SKELETON_CONNECTIONS = [
   [12, 14], [14, 16],                         // right leg
 ]
 
+// Electric Kiwi strike data-viz ramp — punches glow lime/green, kicks burn orange
 const STRIKE_COLORS = {
-  jab:            '#818cf8',  // indigo
-  cross:          '#a78bfa',  // violet
-  hook:           '#f472b6',  // pink
-  roundhouse_kick:'#fb923c',  // orange
-  rear_kick:      '#facc15',  // yellow
+  jab:            '#ccff00',  // electric lime (lead hand = brand)
+  cross:          '#dfff00',  // volt
+  hook:           '#88ff00',  // green
+  roundhouse_kick:'#ff6b00',  // deep orange kick
+  rear_kick:      '#ff9500',  // amber kick
 }
 
-const DEFAULT_SKELETON_COLOR = '#22d3ee'   // cyan
-const MUTED_SKELETON_COLOR   = '#374151'   // gray — for non-selected subjects
+const DEFAULT_SKELETON_COLOR = '#ccff00'   // electric lime pose skeleton
+const MUTED_SKELETON_COLOR   = '#333333'   // line-2 — for non-selected subjects
 const JOINT_RADIUS = 2
 const VISIBILITY_THRESHOLD = 0.3
 

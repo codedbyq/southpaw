@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { useAuth } from '@clerk/react'
 import { useNavigate } from 'react-router-dom'
 import { useApi } from '../api/client'
+import Button from './Button'
 
 const ACCEPTED_TYPES = ['video/mp4', 'video/quicktime', 'video/x-msvideo']
 const CHUNK_SIZE = 10 * 1024 * 1024  // 10MB
@@ -295,33 +296,22 @@ export default function UploadButton({ onUploadComplete }) {
 
       {/* Idle — show upload button */}
       {state === 'idle' && (
-        <button
-          onClick={() => { reset(); fileInputRef.current?.click() }}
-          className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-500 transition-colors"
-        >
-          Upload clip
-        </button>
+        <Button onClick={() => { reset(); fileInputRef.current?.click() }}>
+          + Upload clip
+        </Button>
       )}
 
       {/* Error — show message + retry / restart options */}
       {state === 'error' && (
         <div className="flex flex-col gap-2">
-          <p className="text-sm text-red-400">{error}</p>
+          <p className="text-sm text-danger">{error}</p>
           <div className="flex gap-2">
             {files.length > 0 && (
-              <button
-                onClick={handleStartUpload}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg transition-colors"
-              >
-                Try again
-              </button>
+              <Button size="sm" onClick={handleStartUpload}>Try again</Button>
             )}
-            <button
-              onClick={() => { reset(); fileInputRef.current?.click() }}
-              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-lg transition-colors"
-            >
+            <Button variant="secondary" size="sm" onClick={() => { reset(); fileInputRef.current?.click() }}>
               Choose different file
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -332,12 +322,12 @@ export default function UploadButton({ onUploadComplete }) {
           {/* File list */}
           <div>
             {files.length === 1 ? (
-              <p className="text-sm text-gray-400 truncate max-w-xs">{files[0].name}</p>
+              <p className="text-sm text-text3 truncate max-w-xs">{files[0].name}</p>
             ) : (
               <div className="space-y-1">
-                <p className="text-xs text-gray-500">{files.length} clips selected</p>
+                <p className="text-xs text-muted">{files.length} clips selected</p>
                 {files.map((f, i) => (
-                  <p key={i} className="text-xs text-gray-400 truncate max-w-xs">• {f.name}</p>
+                  <p key={i} className="text-xs text-text3 truncate max-w-xs">• {f.name}</p>
                 ))}
               </div>
             )}
@@ -345,7 +335,7 @@ export default function UploadButton({ onUploadComplete }) {
 
           {/* Multi-file session required notice */}
           {isMulti && (
-            <p className="text-xs text-indigo-400 bg-indigo-950 border border-indigo-800 rounded-lg px-3 py-2">
+            <p className="text-xs text-kiwi bg-kiwi/8 border border-kiwi/40 rounded-lg px-3 py-2">
               A session is required when uploading multiple clips.
             </p>
           )}
@@ -353,24 +343,24 @@ export default function UploadButton({ onUploadComplete }) {
           {/* Sport + session */}
           <div className="flex flex-wrap gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-500">Sport</label>
+              <label className="text-xs text-muted">Sport</label>
               <select
                 value={sport}
                 onChange={e => { setSport(e.target.value); setSessionValue('') }}
-                className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg"
+                className="input w-auto"
               >
                 {SPORTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
             </div>
 
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-500">
-                Session {isMulti ? <span className="text-red-400">*</span> : '(optional)'}
+              <label className="text-xs text-muted">
+                Session {isMulti ? <span className="text-danger">*</span> : '(optional)'}
               </label>
               <select
                 value={sessionValue}
                 onChange={e => setSessionValue(e.target.value)}
-                className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg"
+                className="input w-auto"
               >
                 {!isMulti && <option value="">Skip</option>}
                 {isMulti && <option value="">Select a session...</option>}
@@ -386,35 +376,35 @@ export default function UploadButton({ onUploadComplete }) {
 
           {/* Inline session create */}
           {sessionValue === 'new' && (
-            <div className="flex flex-wrap gap-3 pl-3 border-l-2 border-indigo-800">
+            <div className="flex flex-wrap gap-3 pl-3 border-l-2 border-kiwi">
               <div className="flex flex-col gap-1">
-                <label className="text-xs text-gray-500">Label (optional)</label>
+                <label className="text-xs text-muted">Label (optional)</label>
                 <input
                   type="text"
                   placeholder="e.g. Saturday sparring"
                   value={newLabel}
                   onChange={e => setNewLabel(e.target.value)}
-                  className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg w-48"
+                  className="input w-48"
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-xs text-gray-500">Type</label>
+                <label className="text-xs text-muted">Type</label>
                 <select
                   value={newSessionType}
                   onChange={e => setNewSessionType(e.target.value)}
-                  className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg"
+                  className="input w-auto"
                 >
                   {SESSION_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1 w-full">
-                <label className="text-xs text-gray-500">Session notes (optional)</label>
+                <label className="text-xs text-muted">Session notes (optional)</label>
                 <input
                   type="text"
                   placeholder="e.g. Focusing on combinations and footwork"
                   value={newSessionNotes}
                   onChange={e => setNewSessionNotes(e.target.value)}
-                  className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg w-full"
+                  className="input"
                 />
               </div>
             </div>
@@ -422,9 +412,9 @@ export default function UploadButton({ onUploadComplete }) {
 
           {/* Clip notes */}
           <div>
-            <label className="text-xs text-gray-500 mb-1 block">
+            <label className="text-xs text-muted mb-1 block">
               {isMulti ? 'Notes for all clips' : 'What are you working on?'}{' '}
-              <span className="text-gray-600">
+              <span className="text-muted">
                 {isMulti
                   ? '(optional — applies to all clips; edit per-clip notes from the player page after upload)'
                   : '(optional — helps the AI focus feedback)'}
@@ -435,7 +425,7 @@ export default function UploadButton({ onUploadComplete }) {
               onChange={e => setClipNotes(e.target.value)}
               placeholder="e.g. Drilling hooks, working on guard after the jab..."
               rows={2}
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
+              className="input resize-none"
             />
           </div>
 
@@ -446,27 +436,18 @@ export default function UploadButton({ onUploadComplete }) {
                 type="checkbox"
                 checked={autoNavigate}
                 onChange={e => setAutoNavigate(e.target.checked)}
-                className="w-3.5 h-3.5 accent-indigo-500"
+                className="w-3.5 h-3.5 accent-kiwi"
               />
-              <span className="text-xs text-gray-400">Open clip when processing completes</span>
+              <span className="text-xs text-text3">Open clip when processing completes</span>
             </label>
           )}
 
           {/* Actions */}
           <div className="flex gap-2">
-            <button
-              onClick={handleStartUpload}
-              disabled={!canStart}
-              className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm"
-            >
+            <Button size="sm" onClick={handleStartUpload} disabled={!canStart}>
               {isMulti ? `Upload ${files.length} clips` : 'Start upload'}
-            </button>
-            <button
-              onClick={reset}
-              className="px-3 py-2 bg-gray-700 text-gray-300 font-medium rounded-lg hover:bg-gray-600 transition-colors text-sm"
-            >
-              Cancel
-            </button>
+            </Button>
+            <Button variant="secondary" size="sm" onClick={reset}>Cancel</Button>
           </div>
         </div>
       )}
@@ -474,13 +455,13 @@ export default function UploadButton({ onUploadComplete }) {
       {/* Uploading — single file */}
       {state === 'uploading' && !isMulti && (
         <div className="flex items-center gap-3">
-          <div className="w-40 h-2 bg-gray-800 rounded-full overflow-hidden">
+          <div className="w-40 h-2 bg-surface3 rounded-full overflow-hidden">
             <div
-              className={`h-full transition-all duration-200 ${singlePhase === 'uploading' ? 'bg-indigo-500' : 'bg-violet-500'}`}
+              className={`h-full transition-all duration-200 ${singlePhase === 'uploading' ? 'bg-kiwi' : 'bg-warning'}`}
               style={{ width: `${singleProgress}%` }}
             />
           </div>
-          <span className="text-sm text-gray-400">
+          <span className="text-sm text-text3 tabular-nums">
             {singlePhase === 'uploading' ? `Uploading ${singleProgress}%` : `Analysing ${singleProgress}%`}
           </span>
         </div>
@@ -492,19 +473,19 @@ export default function UploadButton({ onUploadComplete }) {
           {fileStatuses.map((fs, i) => (
             <div key={i} className="flex items-center gap-2">
               <div className="flex-1 min-w-0">
-                <p className="text-xs text-gray-400 truncate">{fs.name}</p>
-                <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden mt-1">
+                <p className="text-xs text-text3 truncate">{fs.name}</p>
+                <div className="w-full h-1.5 bg-surface3 rounded-full overflow-hidden mt-1">
                   <div
                     className={`h-full rounded-full transition-all duration-200 ${
-                      fs.status === 'failed' ? 'bg-red-500' :
-                      fs.status === 'queued_processing' ? 'bg-green-500' :
-                      fs.status === 'uploading' ? 'bg-indigo-500' : 'bg-gray-700'
+                      fs.status === 'failed' ? 'bg-danger' :
+                      fs.status === 'queued_processing' ? 'bg-kiwi' :
+                      fs.status === 'uploading' ? 'bg-kiwi' : 'bg-line2'
                     }`}
                     style={{ width: `${fs.progress}%` }}
                   />
                 </div>
               </div>
-              <span className={`text-xs flex-shrink-0 w-16 text-right ${fs.status === 'failed' ? 'text-red-400' : 'text-gray-500'}`}>
+              <span className={`text-xs flex-shrink-0 w-16 text-right tabular-nums ${fs.status === 'failed' ? 'text-danger' : 'text-muted'}`}>
                 {fs.status === 'queued' ? 'Queued' :
                  fs.status === 'uploading' ? `${fs.progress}%` :
                  fs.status === 'queued_processing' ? '✓ Done' : '✗ Failed'}
@@ -516,7 +497,7 @@ export default function UploadButton({ onUploadComplete }) {
 
       {/* Inline error for uploading state (e.g. SSE processing failure) */}
       {state !== 'error' && error && (
-        <p className="mt-2 text-sm text-red-400">{error}</p>
+        <p className="mt-2 text-sm text-danger">{error}</p>
       )}
     </div>
   )
