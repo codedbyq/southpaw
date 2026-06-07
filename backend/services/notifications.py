@@ -1,5 +1,5 @@
 """
-Notification helpers — async for FastAPI routes, sync for Celery workers.
+Notification helpers — async for FastAPI routes, sync for the Modal inference function.
 """
 import uuid
 from models.notification import Notification
@@ -36,7 +36,7 @@ def create_notification_sync(
     reference_id: uuid.UUID | None = None,
     reference_type: str | None = None,
 ):
-    """Sync version — use in Celery worker tasks."""
+    """Sync version — use in the Modal inference function."""
     notif = Notification(
         user_id=user_id,
         type=type,

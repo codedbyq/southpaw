@@ -456,7 +456,7 @@ async def generate_feedback(summary: dict, llm_model: str = "deepseek-chat") -> 
 
 
 def generate_feedback_sync(summary: dict, llm_model: str = "deepseek-chat") -> str:
-    """Synchronous version for use in Celery workers (which run in a sync context)."""
+    """Synchronous version for use in the Modal inference function (which runs in a sync context)."""
     system, user_message = build_feedback_prompt(summary)
     cfg = _llm_config(llm_model)
 

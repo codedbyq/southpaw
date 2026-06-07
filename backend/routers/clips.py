@@ -94,7 +94,7 @@ async def get_clip_feedback(
     clerk_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return pre-generated coaching feedback for a clip (written by the Celery task)."""
+    """Return pre-generated coaching feedback for a clip (written by the Modal inference function)."""
     clip = await _get_clip_for_user(clip_id, clerk_user_id, db)
     if not clip.feedback:
         raise HTTPException(status_code=404, detail="Feedback not yet available")
