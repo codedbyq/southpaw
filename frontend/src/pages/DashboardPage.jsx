@@ -1,15 +1,15 @@
 import { useState, useEffect } from 'react'
-import { UserButton } from '@clerk/react'
 import { useNavigate } from 'react-router-dom'
 import { useApi } from '../api/client'
+import AppLayout from '../components/AppLayout'
+import Button from '../components/Button'
 import UploadButton from '../components/UploadButton'
 import ClipCard from '../components/ClipCard'
 import SessionCard from '../components/SessionCard'
 import StatsBar from '../components/StatsBar'
 import { StatsBarSkeleton, SessionCardSkeleton, ClipCardSkeleton } from '../components/Skeleton'
-import BuyCreditsModal from '../components/BuyCreditsModal'
-import NotificationBell from '../components/NotificationBell'
 import StarRating from '../components/StarRating'
+import Tag from '../components/Tag'
 
 const SPORTS = [
   { value: 'boxing',    label: 'Boxing' },
@@ -49,7 +49,6 @@ export default function DashboardPage() {
   const [selectedClipIds, setSelectedClipIds] = useState(new Set())
   const [bulkSessionId, setBulkSessionId] = useState('')
   const [bulkLoading, setBulkLoading] = useState(false)
-  const [showBuyCredits, setShowBuyCredits] = useState(false)
   const [paymentBanner, setPaymentBanner] = useState(null) // 'success' | 'cancelled'
 
   // Trend feedback
@@ -268,84 +267,34 @@ export default function DashboardPage() {
     ? unorganizedClips.filter(c => c.filename.toLowerCase().includes(searchLower))
     : unorganizedClips
 
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
+
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
-        <span className="font-bold text-lg tracking-tight">Southpaw</span>
-        <div className="flex items-center gap-4">
-          <button onClick={() => navigate('/coaches')} className="text-sm text-gray-400 hover:text-white transition-colors">
-            Find a coach
-          </button>
-          {currentUser?.user_type === 'coach' && (
-            <button onClick={() => navigate('/reviews/queue')} className="text-sm text-gray-400 hover:text-white transition-colors">
-              Review queue
-            </button>
-          )}
-          {currentUser && (
-            <select
-              value={currentUser.experience_level || 'intermediate'}
-              onChange={async e => {
-                await api.patch('/users/me', { experience_level: e.target.value })
-                setCurrentUser(prev => ({ ...prev, experience_level: e.target.value }))
-              }}
-              className="text-xs px-2.5 py-1.5 bg-gray-800 border border-gray-700 text-gray-400 rounded-lg focus:outline-none focus:border-indigo-500"
-              title="Your experience level affects AI feedback tone and standards"
-            >
-              <option value="beginner">Beginner</option>
-              <option value="intermediate">Intermediate</option>
-              <option value="advanced">Advanced</option>
-              <option value="pro">Pro</option>
-            </select>
-          )}
-          {currentUser?.is_admin && (
-            <button onClick={() => navigate('/admin')} className="text-sm text-amber-500 hover:text-amber-400 transition-colors">
-              Admin
-            </button>
-          )}
-          {currentUser && (
-            <div className="flex items-center gap-2">
-              {currentUser.subscription_tier !== 'free' && (
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                  currentUser.subscription_tier === 'elite'
-                    ? 'bg-yellow-900 text-yellow-400'
-                    : 'bg-indigo-900 text-indigo-400'
-                }`}>
-                  {currentUser.subscription_tier === 'elite' ? 'Elite' : 'Pro'}
-                </span>
-              )}
-              <button
-                onClick={() => setShowBuyCredits(true)}
-                className="flex items-center gap-1.5 text-sm px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-colors"
-              >
-                <span className="text-yellow-400">⚡</span>
-                {currentUser.credits_balance} credits
-              </button>
-            </div>
-          )}
-          <NotificationBell />
-          <UserButton />
+    <AppLayout active="dashboard">
+      <div className="mx-auto max-w-5xl px-8 py-8">
+        {/* ── Greeting header ── */}
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div>
+            <p className="font-display text-[13px] font-semibold uppercase tracking-[0.13em] text-muted">{today}</p>
+            <h1 className="mt-1 font-display text-[32px] font-extrabold leading-tight text-text">
+              {currentUser?.user_type === 'coach' ? 'Coach dashboard' : 'Welcome back'}
+            </h1>
+          </div>
+          <UploadButton onUploadComplete={loadData} />
         </div>
-      </nav>
 
-      {showBuyCredits && (
-        <BuyCreditsModal
-          onClose={() => setShowBuyCredits(false)}
-        />
-      )}
-
-      <main className="max-w-4xl mx-auto px-6 py-12">
         {paymentBanner && (
-          <div className={`mb-6 p-4 rounded-xl flex items-center justify-between ${
+          <div className={`mb-6 flex items-center justify-between rounded-2xl p-4 ${
             paymentBanner === 'success'
-              ? 'bg-green-950 border border-green-800'
-              : 'bg-gray-900 border border-gray-800'
+              ? 'border border-kiwi/40 bg-kiwi/8'
+              : 'border border-line bg-surface'
           }`}>
-            <p className={`text-sm font-medium ${paymentBanner === 'success' ? 'text-green-400' : 'text-gray-400'}`}>
+            <p className={`text-sm font-medium ${paymentBanner === 'success' ? 'text-kiwi' : 'text-text3'}`}>
               {paymentBanner === 'success'
                 ? '✓ Payment successful — your credits have been added'
                 : 'Payment cancelled — no charge was made'}
             </p>
-            <button onClick={() => setPaymentBanner(null)} className="text-gray-600 hover:text-white ml-4">×</button>
+            <button onClick={() => setPaymentBanner(null)} className="ml-4 text-muted hover:text-text">×</button>
           </div>
         )}
 
@@ -365,37 +314,27 @@ export default function DashboardPage() {
 
             {/* ── Free tier upgrade prompt ── */}
             {currentUser?.subscription_tier === 'free' && (
-              <div className="mb-6 p-4 bg-gray-900 border border-gray-800 rounded-xl flex items-center justify-between">
+              <div className="mb-6 flex items-center justify-between rounded-2xl border border-line bg-surface p-4">
                 <div>
-                  <p className="text-sm text-white font-medium">You're on the Free plan</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <p className="text-sm font-medium text-text">You're on the Free plan</p>
+                  <p className="mt-0.5 text-xs text-muted">
                     3 clips/month · Upgrade for unlimited clips, session feedback and more credits
                   </p>
                 </div>
-                <button
-                  onClick={() => navigate('/pricing')}
-                  className="ml-6 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0"
-                >
-                  Upgrade
-                </button>
+                <Button size="sm" onClick={() => navigate('/pricing')} className="ml-6 flex-shrink-0">Upgrade</Button>
               </div>
             )}
 
             {/* ── Coach profile prompt ── */}
             {currentUser?.user_type === 'coach' && hasCoachProfile === false && (
-              <div className="mb-8 p-5 bg-indigo-950 border border-indigo-800 rounded-xl flex items-center justify-between">
+              <div className="mb-8 flex items-center justify-between rounded-2xl border border-kiwi/40 bg-kiwi/8 p-5">
                 <div>
-                  <p className="text-white font-medium text-sm">Set up your coach profile</p>
-                  <p className="text-indigo-300 text-xs mt-0.5">
+                  <p className="text-sm font-medium text-text">Set up your coach profile</p>
+                  <p className="mt-0.5 text-xs text-text3">
                     Add your bio, specializations, and credit rate to appear in the marketplace.
                   </p>
                 </div>
-                <button
-                  onClick={() => navigate('/coach/profile')}
-                  className="ml-6 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0"
-                >
-                  Set up profile
-                </button>
+                <Button size="sm" onClick={() => navigate('/coach/profile')} className="ml-6 flex-shrink-0">Set up profile</Button>
               </div>
             )}
 
@@ -404,7 +343,7 @@ export default function DashboardPage() {
               <div className="mb-8 flex justify-end">
                 <button
                   onClick={() => navigate('/coach/profile')}
-                  className="text-sm text-gray-500 hover:text-white transition-colors"
+                  className="text-sm text-muted transition-colors hover:text-kiwi"
                 >
                   Edit coach profile →
                 </button>
@@ -413,40 +352,37 @@ export default function DashboardPage() {
 
             {/* ── Trend Feedback ── */}
             {sessions.length >= 1 && (
-              <div className="mb-10 p-5 bg-gray-900 border border-gray-800 rounded-xl">
-                <div className="flex items-center justify-between mb-3">
+              <div className="relative mb-10 overflow-hidden rounded-2xl border border-line bg-surface p-5">
+                <span className="absolute inset-y-0 left-0 w-[3px] bg-kiwi" />
+                <div className="mb-3 flex items-center justify-between">
                   <div>
-                    <h2 className="text-lg font-semibold text-white">Progress analysis</h2>
-                    <p className="text-xs text-gray-500 mt-0.5">AI coaching trends across your last sessions</p>
+                    <h2 className="font-display text-lg font-extrabold uppercase tracking-wide text-text">Progress analysis</h2>
+                    <p className="mt-0.5 text-xs text-muted">AI coaching trends across your last sessions</p>
                   </div>
                   {sessions.length >= 2 && (
-                    <button
-                      onClick={handleTrendFeedback}
-                      disabled={trendLoading}
-                      className="text-sm px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg transition-colors"
-                    >
+                    <Button size="sm" onClick={handleTrendFeedback} disabled={trendLoading}>
                       {trendLoading ? 'Analysing...' : trendFeedback ? 'Refresh' : 'Analyse progress'}
-                    </button>
+                    </Button>
                   )}
                 </div>
 
                 {sessions.length < 2 ? (
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted">
                     1 more session needed to unlock progress analysis.
                   </p>
                 ) : trendError ? (
-                  <p className="text-red-400 text-sm">{trendError}</p>
+                  <p className="text-sm text-danger">{trendError}</p>
                 ) : trendFeedback && !trendLoading ? (
                   <div>
-                    <p className="text-xs text-gray-500 mb-3">
+                    <p className="mb-3 text-xs text-muted">
                       Based on {trendFeedback.session_count} sessions
                     </p>
-                    <div className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
+                    <div className="whitespace-pre-wrap text-sm leading-relaxed text-text2">
                       {trendFeedback.feedback}
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted">
                     Click analyse to see how your training has progressed over time.
                   </p>
                 )}
@@ -456,54 +392,53 @@ export default function DashboardPage() {
             {/* ── Pending reviews ── */}
             {athleteReviews.filter(r => r.status !== 'cancelled').length > 0 && (
               <div className="mb-10">
-                <h2 className="text-xl font-semibold mb-4">Coach reviews</h2>
+                <h2 className="mb-4 font-display text-xl font-extrabold uppercase tracking-wide text-text">Coach reviews</h2>
                 <div className="flex flex-col gap-3">
                   {athleteReviews.filter(r => r.status !== 'cancelled').map(review => (
-                    <div key={review.id} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+                    <div key={review.id} className="overflow-hidden rounded-2xl border border-line bg-surface">
                       <div
                         onClick={() => review.clip_id && navigate(`/clips/${review.clip_id}`)}
-                        className={`flex items-center gap-4 p-4 transition-colors ${review.clip_id ? 'cursor-pointer hover:bg-gray-800/50' : ''}`}
+                        className={`flex items-center gap-4 p-4 transition-colors ${review.clip_id ? 'cursor-pointer hover:bg-surface2' : ''}`}
                       >
-                        <div className="w-14 h-10 rounded-lg bg-gray-800 flex-shrink-0 overflow-hidden">
+                        <div className="h-10 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-surface3">
                           {review.clip_thumbnail_url
-                            ? <img src={review.clip_thumbnail_url} alt="" className="w-full h-full object-cover" />
-                            : <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">🎬</div>
+                            ? <img src={review.clip_thumbnail_url} alt="" className="h-full w-full object-cover" />
+                            : <div className="flex h-full w-full items-center justify-center text-xs text-muted">🎬</div>
                           }
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-white truncate">{review.clip_filename || 'Clip'}</p>
-                          <p className="text-xs text-gray-500 mt-0.5">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm text-text">{review.clip_filename || 'Clip'}</p>
+                          <p className="mt-0.5 text-xs text-muted">
                             {review.coach_display_name || 'Coach'} · {review.credits_cost} credits
                           </p>
                         </div>
-                        <span className={`text-xs px-2.5 py-1 rounded-full font-medium flex-shrink-0 ${
-                          review.status === 'complete' ? 'bg-green-900 text-green-400' :
-                          review.status === 'in_review' ? 'bg-blue-900 text-blue-400' :
-                          'bg-yellow-900 text-yellow-400'
-                        }`}>
+                        <Tag tone={
+                          review.status === 'complete' ? 'success' :
+                          review.status === 'in_review' ? 'pads' : 'warning'
+                        }>
                           {review.status === 'complete' ? 'Complete' :
                            review.status === 'in_review' ? 'In review' : 'Pending'}
-                        </span>
+                        </Tag>
                       </div>
 
                       {/* Rating row — only for complete reviews */}
                       {review.status === 'complete' && (
-                        <div className="px-4 pb-3 flex items-center gap-3 border-t border-gray-800/60 pt-3">
+                        <div className="flex items-center gap-3 border-t border-line px-4 pb-3 pt-3">
                           {review.athlete_rating ? (
                             <>
-                              <span className="text-xs text-gray-500">Your rating:</span>
+                              <span className="text-xs text-muted">Your rating:</span>
                               <StarRating value={review.athlete_rating} readonly size="sm" />
                             </>
                           ) : (
                             <>
-                              <span className="text-xs text-gray-500">Rate this review:</span>
+                              <span className="text-xs text-muted">Rate this review:</span>
                               <StarRating
                                 value={null}
                                 size="sm"
                                 onChange={rating => handleRateReview(review.id, rating)}
                               />
                               {ratingLoading === review.id && (
-                                <span className="text-xs text-gray-500">Saving...</span>
+                                <span className="text-xs text-muted">Saving...</span>
                               )}
                             </>
                           )}
@@ -518,7 +453,7 @@ export default function DashboardPage() {
             {/* ── Search ── */}
             {(sessions.length > 3 || unorganizedClips.length > 3) && (
               <div className="relative mb-6">
-                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
                 <input
@@ -526,12 +461,12 @@ export default function DashboardPage() {
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder="Search sessions and clips..."
-                  className="w-full pl-9 pr-4 py-2.5 bg-gray-900 border border-gray-800 rounded-xl text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                  className="input pl-9"
                 />
                 {search && (
                   <button
                     onClick={() => setSearch('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-text"
                   >
                     ×
                   </button>
@@ -540,104 +475,93 @@ export default function DashboardPage() {
             )}
 
             {/* ── Sessions ── */}
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-xl font-semibold">Your sessions</h2>
-              <button
-                onClick={() => setShowNewSession(v => !v)}
-                className="text-sm px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-colors"
-              >
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="font-display text-xl font-extrabold uppercase tracking-wide text-text">Your sessions</h2>
+              <Button variant="secondary" size="sm" onClick={() => setShowNewSession(v => !v)}>
                 {showNewSession ? 'Cancel' : '+ New session'}
-              </button>
+              </Button>
             </div>
 
             {showNewSession && (
               <form
                 onSubmit={handleCreateSession}
-                className="mb-5 p-4 bg-gray-900 border border-gray-700 rounded-xl flex flex-wrap gap-3 items-end"
+                className="mb-5 flex flex-wrap items-end gap-3 rounded-2xl border border-line2 bg-surface p-4"
               >
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs text-gray-500">Label (optional)</label>
+                  <label className="text-xs text-muted">Label (optional)</label>
                   <input
                     type="text"
                     placeholder="e.g. Saturday sparring"
                     value={newLabel}
                     onChange={e => setNewLabel(e.target.value)}
-                    className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg w-48"
+                    className="input w-48"
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs text-gray-500">Sport</label>
+                  <label className="text-xs text-muted">Sport</label>
                   <select
                     value={newSport}
                     onChange={e => setNewSport(e.target.value)}
-                    className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg"
+                    className="input"
                   >
                     {SPORTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs text-gray-500">Type</label>
+                  <label className="text-xs text-muted">Type</label>
                   <select
                     value={newType}
                     onChange={e => setNewType(e.target.value)}
-                    className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg"
+                    className="input"
                   >
                     {SESSION_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                   </select>
                 </div>
-                <div className="flex flex-col gap-1 w-full">
-                  <label className="text-xs text-gray-500">Notes (optional)</label>
+                <div className="flex w-full flex-col gap-1">
+                  <label className="text-xs text-muted">Notes (optional)</label>
                   <input
                     type="text"
                     placeholder="e.g. Working on footwork and combinations"
                     value={newNotes}
                     onChange={e => setNewNotes(e.target.value)}
-                    className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg w-full"
+                    className="input"
                   />
                 </div>
-                <button
-                  type="submit"
-                  disabled={creating}
-                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
-                >
+                <Button type="submit" size="sm" disabled={creating}>
                   {creating ? 'Creating...' : 'Create'}
-                </button>
+                </Button>
               </form>
             )}
 
             {sessions.length === 0 ? (
-              <p className="text-gray-500 text-sm mb-12">
+              <p className="mb-12 text-sm text-muted">
                 No sessions yet. Create one above or tag a clip to a session during upload.
               </p>
             ) : filteredSessions.length === 0 ? (
-              <p className="text-gray-500 text-sm mb-12">No sessions match "{search}".</p>
+              <p className="mb-12 text-sm text-muted">No sessions match "{search}".</p>
             ) : (
               <>
-                <div className="flex flex-col gap-4 mb-4">
+                <div className="mb-4 flex flex-col gap-3">
                   {filteredSessions.map(session => (
                     <SessionCard key={session.id} session={session} />
                   ))}
                 </div>
                 {hasMoreSessions && !searchLower && (
                   <div className="mb-8 text-center">
-                    <button
-                      onClick={loadMoreSessions}
-                      disabled={loadingMoreSessions}
-                      className="px-4 py-2 text-sm text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
-                    >
+                    <Button variant="secondary" size="sm" onClick={loadMoreSessions} disabled={loadingMoreSessions}>
                       {loadingMoreSessions ? 'Loading...' : 'Load more sessions'}
-                    </button>
+                    </Button>
                   </div>
                 )}
               </>
             )}
 
             {/* ── Unorganized clips ── */}
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-xl font-semibold">
+            <div className="mb-3 mt-10 flex items-center justify-between">
+              <h2 className="font-display text-xl font-extrabold uppercase tracking-wide text-text">
                 Unorganized clips
                 {unorganizedClips.length > 0 && (
-                  <span className="ml-2 text-sm font-normal text-gray-500">
+                  <span className="ml-2 font-sans text-sm font-normal text-muted">
                     {unorganizedClips.length}
                   </span>
                 )}
@@ -647,15 +571,15 @@ export default function DashboardPage() {
 
             {/* Select all row */}
             {unorganizedClips.length > 1 && (
-              <div className="flex items-center gap-3 mb-3">
+              <div className="mb-3 flex items-center gap-3">
                 <button
                   onClick={toggleSelectAll}
-                  className="text-xs text-gray-500 hover:text-white transition-colors"
+                  className="text-xs text-muted transition-colors hover:text-text"
                 >
                   {selectedClipIds.size === unorganizedClips.length ? 'Deselect all' : 'Select all'}
                 </button>
                 {selectedClipIds.size > 0 && (
-                  <span className="text-xs text-gray-600">
+                  <span className="text-xs text-muted">
                     {selectedClipIds.size} selected
                   </span>
                 )}
@@ -664,11 +588,11 @@ export default function DashboardPage() {
 
             {/* Bulk action bar */}
             {selectedClipIds.size > 0 && (
-              <div className="flex items-center gap-3 mb-4 p-3 bg-gray-900 border border-gray-700 rounded-xl">
+              <div className="mb-4 flex items-center gap-3 rounded-2xl border border-line2 bg-surface p-3">
                 <select
                   value={bulkSessionId}
                   onChange={e => setBulkSessionId(e.target.value)}
-                  className="flex-1 px-3 py-1.5 bg-gray-800 border border-gray-700 text-white text-sm rounded-lg focus:outline-none"
+                  className="input flex-1"
                 >
                   <option value="">Assign to session...</option>
                   {sessions.map(s => (
@@ -677,23 +601,15 @@ export default function DashboardPage() {
                     </option>
                   ))}
                 </select>
-                <button
-                  onClick={handleBulkAssign}
-                  disabled={!bulkSessionId || bulkLoading}
-                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-colors"
-                >
+                <Button size="sm" onClick={handleBulkAssign} disabled={!bulkSessionId || bulkLoading}>
                   {bulkLoading ? 'Moving...' : 'Assign'}
-                </button>
-                <button
-                  onClick={handleBulkDelete}
-                  disabled={bulkLoading}
-                  className="px-3 py-1.5 bg-red-900 hover:bg-red-800 disabled:opacity-40 text-red-300 text-xs font-medium rounded-lg transition-colors"
-                >
+                </Button>
+                <Button variant="danger" size="sm" onClick={handleBulkDelete} disabled={bulkLoading}>
                   Delete {selectedClipIds.size}
-                </button>
+                </Button>
                 <button
                   onClick={() => setSelectedClipIds(new Set())}
-                  className="text-xs text-gray-500 hover:text-white transition-colors"
+                  className="text-xs text-muted transition-colors hover:text-text"
                 >
                   Cancel
                 </button>
@@ -701,13 +617,13 @@ export default function DashboardPage() {
             )}
 
             {unorganizedClips.length === 0 ? (
-              <p className="text-gray-500 text-sm">
+              <p className="text-sm text-muted">
                 {clips.length === 0
                   ? 'No clips yet. Upload your first clip to get started.'
                   : 'All clips are assigned to sessions.'}
               </p>
             ) : filteredClips.length === 0 ? (
-              <p className="text-gray-500 text-sm">No clips match "{search}".</p>
+              <p className="text-sm text-muted">No clips match "{search}".</p>
             ) : (
               <>
                 <div className="flex flex-col gap-3">
@@ -724,20 +640,16 @@ export default function DashboardPage() {
                 </div>
                 {hasMoreClips && !searchLower && (
                   <div className="mt-4 text-center">
-                    <button
-                      onClick={loadMoreClips}
-                      disabled={loadingMoreClips}
-                      className="px-4 py-2 text-sm text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
-                    >
+                    <Button variant="secondary" size="sm" onClick={loadMoreClips} disabled={loadingMoreClips}>
                       {loadingMoreClips ? 'Loading...' : 'Load more clips'}
-                    </button>
+                    </Button>
                   </div>
                 )}
               </>
             )}
           </>
         )}
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   )
 }

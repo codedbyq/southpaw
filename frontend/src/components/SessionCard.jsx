@@ -1,67 +1,53 @@
 import { useNavigate } from 'react-router-dom'
-
-const SPORT_LABELS = {
-  boxing:    'Boxing',
-  muay_thai: 'Muay Thai',
-  mma:       'MMA',
-}
-
-const SESSION_TYPE_LABELS = {
-  sparring: 'Sparring',
-  bag:      'Bag work',
-  pads:     'Pads',
-  shadow:   'Shadow boxing',
-}
+import { SportTag, SessionTypeTag } from './Tag'
 
 export default function SessionCard({ session }) {
   const navigate = useNavigate()
 
+  const guard = session.guard_drop_rate
+  const guardColor = guard == null ? 'text-text'
+    : guard < 0.35 ? 'text-kiwi'
+    : guard > 0.5 ? 'text-danger'
+    : 'text-text'
+
   return (
     <div
       onClick={() => navigate(`/sessions/${session.id}`)}
-      className="p-5 bg-gray-900 rounded-xl border border-gray-800 hover:border-gray-700 cursor-pointer transition-colors"
+      className="group flex cursor-pointer items-center gap-4 rounded-2xl border border-line bg-surface px-5 py-4 transition-all hover:border-line2 hover:bg-surface2"
     >
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="font-medium text-white truncate">
-            {session.label || 'Untitled session'}
-          </p>
-          <div className="flex items-center flex-wrap gap-2 mt-1.5">
-            <span className="text-xs px-2 py-0.5 bg-gray-800 text-gray-300 rounded-full">
-              {SPORT_LABELS[session.sport] || session.sport}
-            </span>
-            {session.session_type && (
-              <span className="text-xs px-2 py-0.5 bg-gray-800 text-gray-300 rounded-full">
-                {SESSION_TYPE_LABELS[session.session_type] || session.session_type}
-              </span>
-            )}
-            <span className="text-xs text-gray-500">
-              {new Date(session.created_at).toLocaleDateString('en-US', {
-                month: 'short', day: 'numeric', year: 'numeric',
-              })}
-            </span>
-          </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-display text-[17px] font-bold tracking-wide text-text">
+          {session.label || 'Untitled session'}
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <SportTag sport={session.sport} />
+          <SessionTypeTag type={session.session_type} />
+          <span className="text-xs text-muted">
+            {new Date(session.created_at).toLocaleDateString('en-US', {
+              month: 'short', day: 'numeric', year: 'numeric',
+            })}
+          </span>
         </div>
-        <span className="text-sm text-indigo-400 shrink-0 mt-0.5">View →</span>
       </div>
 
-      <div className="grid grid-cols-4 gap-3 mt-4">
-        <Stat label="Clips" value={session.clip_count} format={n => n} />
-        <Stat label="Strikes" value={session.total_strikes} format={n => n.toLocaleString()} />
-        <Stat label="Per min" value={session.strikes_per_minute} format={n => n.toFixed(1)} />
-        <Stat label="Guard drops" value={session.guard_drop_rate} format={n => `${Math.round(n * 100)}%`} />
+      <div className="flex flex-shrink-0 gap-6">
+        <Metric label="Clips" value={session.clip_count} format={n => n} />
+        <Metric label="Strikes" value={session.total_strikes} format={n => n.toLocaleString()} />
+        <Metric label="/ min" value={session.strikes_per_minute} format={n => n.toFixed(1)} />
+        <Metric label="Guard" value={guard} format={n => `${Math.round(n * 100)}%`} valueClass={guardColor} />
       </div>
+      <span className="flex-shrink-0 text-xl text-muted transition-colors group-hover:text-kiwi">›</span>
     </div>
   )
 }
 
-function Stat({ label, value, format }) {
+function Metric({ label, value, format, valueClass = 'text-text' }) {
   return (
-    <div>
-      <p className="text-xs text-gray-500">{label}</p>
-      <p className="text-sm font-medium tabular-nums mt-0.5">
-        {value != null ? format(value) : <span className="text-gray-600">—</span>}
+    <div className="text-right">
+      <p className={`font-display text-[22px] font-extrabold leading-none tabular-nums ${valueClass}`}>
+        {value != null ? format(value) : <span className="text-muted">—</span>}
       </p>
+      <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-muted">{label}</p>
     </div>
   )
 }

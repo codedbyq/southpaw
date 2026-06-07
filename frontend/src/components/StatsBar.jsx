@@ -9,27 +9,24 @@ export default function StatsBar({ stats }) {
 
   const items = [
     {
-      icon: '🔥',
       value: streak_weeks,
-      label: streak_weeks === 1 ? 'week streak' : 'week streak',
-      sub: streak_weeks === 0 ? 'Train this week to start' : streak_weeks === 1 ? 'Keep it going!' : 'Keep it going!',
+      label: 'Week streak',
+      sub: streak_weeks === 0 ? 'Train this week to start' : 'Keep it going!',
+      highlight: true,
     },
     {
-      icon: '📅',
       value: this_week.sessions,
-      label: this_week.sessions === 1 ? 'session' : 'sessions',
+      label: this_week.sessions === 1 ? 'Session' : 'Sessions',
       sub: 'this week',
     },
     {
-      icon: '⚡',
       value: this_week.strikes.toLocaleString(),
-      label: this_week.strikes === 1 ? 'strike' : 'strikes',
+      label: this_week.strikes === 1 ? 'Strike' : 'Strikes',
       sub: 'this week',
     },
     {
-      icon: '🛡️',
       value: guardPct,
-      label: 'guard discipline',
+      label: 'Guard discipline',
       sub: this_week.guard_drop_rate !== null ? 'this week' : 'no data yet',
     },
   ]
@@ -39,12 +36,18 @@ export default function StatsBar({ stats }) {
       {items.map((item) => (
         <div
           key={item.label}
-          className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex flex-col gap-1"
+          className={`relative overflow-hidden rounded-2xl border bg-surface p-5 transition-colors ${
+            item.highlight ? 'border-kiwi' : 'border-line hover:border-line2'
+          }`}
         >
-          <span className="text-xl">{item.icon}</span>
-          <span className="text-2xl font-bold text-white mt-1">{item.value}</span>
-          <span className="text-xs text-gray-400">{item.label}</span>
-          <span className="text-xs text-gray-600">{item.sub}</span>
+          {item.highlight && <span className="absolute inset-x-0 top-0 h-0.5 bg-kiwi" />}
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">{item.label}</p>
+          <p className={`mt-2.5 font-display text-[40px] font-black leading-none tabular-nums ${
+            item.highlight ? 'text-kiwi' : 'text-text'
+          }`}>
+            {item.value}
+          </p>
+          <p className="mt-2 text-xs text-muted">{item.sub}</p>
         </div>
       ))}
     </div>

@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useApi } from '../api/client'
+import AppLayout from '../components/AppLayout'
+import Button from '../components/Button'
+import Tag from '../components/Tag'
 import CanvasPlayer from '../components/CanvasPlayer'
 import { PlayerSkeleton } from '../components/Skeleton'
 
@@ -87,19 +90,17 @@ export default function CoachReviewPlayerPage() {
   }
 
   if (loading) return (
-    <div className="min-h-screen bg-gray-950">
-      <nav className="flex items-center gap-4 px-6 py-4 border-b border-gray-800">
-        <div className="w-28 h-4 bg-gray-800 animate-pulse rounded" />
-        <div className="flex-1 h-4 bg-gray-800 animate-pulse rounded max-w-xs" />
-      </nav>
-      <main className="max-w-5xl mx-auto px-6 py-8"><PlayerSkeleton /></main>
-    </div>
+    <AppLayout active="reviews">
+      <main className="max-w-5xl mx-auto px-8 py-8"><PlayerSkeleton /></main>
+    </AppLayout>
   )
 
   if (error || !clipData) return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-      <p className="text-red-400 text-sm">{error || 'Review not found'}</p>
-    </div>
+    <AppLayout active="reviews">
+      <div className="flex h-full items-center justify-center">
+        <p className="text-danger text-sm">{error || 'Review not found'}</p>
+      </div>
+    </AppLayout>
   )
 
   const isComplete = clipData.review_status === 'complete'
@@ -107,33 +108,25 @@ export default function CoachReviewPlayerPage() {
   const generalComments = comments.filter(c => c.timestamp_seconds == null)
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <nav className="flex items-center gap-4 px-6 py-4 border-b border-gray-800">
-        <button onClick={() => navigate('/reviews/queue')} className="text-gray-400 hover:text-white text-sm transition-colors">
-          ← Review queue
-        </button>
-        <span className="font-medium text-sm text-gray-300 truncate flex-1">{clipData.filename}</span>
-        {!isComplete && (
-          <button
-            onClick={handleComplete}
-            disabled={completing}
-            className="px-4 py-1.5 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            {completing ? 'Completing...' : '✓ Mark complete'}
+    <AppLayout active="reviews">
+      <main className="max-w-5xl mx-auto px-8 py-8 space-y-8">
+        <div className="flex items-center gap-4">
+          <button onClick={() => navigate('/reviews/queue')} className="text-muted hover:text-text text-sm transition-colors">
+            ← Review queue
           </button>
-        )}
-        {isComplete && (
-          <span className="text-xs px-3 py-1.5 bg-green-900 text-green-400 rounded-lg font-medium">
-            Review complete
-          </span>
-        )}
-      </nav>
+          <span className="font-display font-bold text-lg text-text truncate flex-1">{clipData.filename}</span>
+          {!isComplete && (
+            <Button variant="outline" size="sm" onClick={handleComplete} disabled={completing}>
+              {completing ? 'Completing...' : '✓ Mark complete'}
+            </Button>
+          )}
+          {isComplete && <Tag tone="success">Review complete</Tag>}
+        </div>
 
-      <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
         {review?.athlete_note && (
-          <div className="p-4 bg-gray-900 border border-gray-700 rounded-xl">
-            <p className="text-xs text-gray-500 mb-1">Athlete's note</p>
-            <p className="text-sm text-gray-300">"{review.athlete_note}"</p>
+          <div className="p-4 bg-surface border border-line2 rounded-2xl">
+            <p className="text-xs text-muted mb-1">Athlete's note</p>
+            <p className="text-sm text-text2">"{review.athlete_note}"</p>
           </div>
         )}
 
@@ -146,13 +139,13 @@ export default function CoachReviewPlayerPage() {
 
         {/* Comment input */}
         {!isComplete && (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <p className="text-xs text-gray-500 mb-3">Leave timestamped feedback — click the timeline to pin a comment to a moment</p>
+          <div className="bg-surface border border-line rounded-2xl p-4">
+            <p className="text-xs text-muted mb-3">Leave timestamped feedback — click the timeline to pin a comment to a moment</p>
             <form onSubmit={handleSubmitComment} className="flex flex-col gap-3">
               {commentTimestamp != null && (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-yellow-400">📍 {commentTimestamp.toFixed(1)}s</span>
-                  <button type="button" onClick={() => setCommentTimestamp(null)} className="text-xs text-gray-500 hover:text-white">
+                  <span className="text-xs text-gold">📍 {commentTimestamp.toFixed(1)}s</span>
+                  <button type="button" onClick={() => setCommentTimestamp(null)} className="text-xs text-muted hover:text-text">
                     × remove
                   </button>
                 </div>
@@ -164,15 +157,9 @@ export default function CoachReviewPlayerPage() {
                   value={commentBody}
                   onChange={e => setCommentBody(e.target.value)}
                   placeholder={commentTimestamp != null ? `Feedback at ${commentTimestamp.toFixed(1)}s...` : 'General feedback...'}
-                  className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                  className="input flex-1"
                 />
-                <button
-                  type="submit"
-                  disabled={!commentBody.trim() || submitting}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-sm font-medium rounded-lg transition-colors"
-                >
-                  Post
-                </button>
+                <Button type="submit" disabled={!commentBody.trim() || submitting}>Post</Button>
               </div>
             </form>
           </div>
@@ -181,14 +168,14 @@ export default function CoachReviewPlayerPage() {
         {/* Comments */}
         {timestampedComments.length > 0 && (
           <div>
-            <h3 className="text-sm font-medium text-gray-400 mb-3">Timeline feedback</h3>
+            <h3 className="text-sm font-display font-bold uppercase tracking-wide text-muted mb-3">Timeline feedback</h3>
             <div className="flex flex-col gap-2">
               {timestampedComments.map(c => (
-                <div key={c.id} className="flex items-start gap-3 p-3 bg-gray-900 border border-gray-800 rounded-lg">
-                  <span className="text-xs text-yellow-400 font-mono mt-0.5 flex-shrink-0">{c.timestamp_seconds.toFixed(1)}s</span>
+                <div key={c.id} className="flex items-start gap-3 p-3 bg-surface border border-line rounded-xl">
+                  <span className="text-xs text-gold font-display font-bold mt-0.5 flex-shrink-0 tabular-nums">{c.timestamp_seconds.toFixed(1)}s</span>
                   <div className="flex-1">
-                    <span className="text-xs text-gray-500 mr-2">{c.author_name}</span>
-                    <span className="text-sm text-gray-300">{c.body}</span>
+                    <span className="text-xs text-muted mr-2">{c.author_name}</span>
+                    <span className="text-sm text-text2">{c.body}</span>
                   </div>
                 </div>
               ))}
@@ -198,18 +185,18 @@ export default function CoachReviewPlayerPage() {
 
         {generalComments.length > 0 && (
           <div>
-            <h3 className="text-sm font-medium text-gray-400 mb-3">General feedback</h3>
+            <h3 className="text-sm font-display font-bold uppercase tracking-wide text-muted mb-3">General feedback</h3>
             <div className="flex flex-col gap-2">
               {generalComments.map(c => (
-                <div key={c.id} className="p-3 bg-gray-900 border border-gray-800 rounded-lg">
-                  <span className="text-xs text-gray-500 mr-2">{c.author_name}</span>
-                  <span className="text-sm text-gray-300">{c.body}</span>
+                <div key={c.id} className="p-3 bg-surface border border-line rounded-xl">
+                  <span className="text-xs text-muted mr-2">{c.author_name}</span>
+                  <span className="text-sm text-text2">{c.body}</span>
                 </div>
               ))}
             </div>
           </div>
         )}
       </main>
-    </div>
+    </AppLayout>
   )
 }

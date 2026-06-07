@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { UserButton } from '@clerk/react'
 import { useApi } from '../api/client'
+import AppLayout from '../components/AppLayout'
+import Button from '../components/Button'
+import Tag from '../components/Tag'
 import StarRating from '../components/StarRating'
 import { CoachCardSkeleton } from '../components/Skeleton'
 
@@ -24,78 +26,69 @@ function CoachCard({ coach }) {
   return (
     <div
       onClick={() => navigate(`/coaches/${coach.id}`)}
-      className="bg-gray-900 border border-gray-800 hover:border-gray-600 rounded-xl p-5 cursor-pointer transition-all"
+      className="flex cursor-pointer gap-4 rounded-2xl border border-line bg-surface p-5 transition-all hover:border-line2"
     >
-      <div className="flex items-start gap-4">
-        {/* Avatar */}
-        <div className="w-14 h-14 rounded-full bg-gray-800 flex items-center justify-center flex-shrink-0 overflow-hidden text-2xl">
-          {coach.avatar_url
-            ? <img src={coach.avatar_url} alt={coach.display_name} className="w-full h-full object-cover" />
-            : '🎯'
-          }
+      {/* Avatar with lime ring */}
+      <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-kiwi bg-surface3 text-2xl">
+        {coach.avatar_url
+          ? <img src={coach.avatar_url} alt={coach.display_name} className="h-full w-full object-cover" />
+          : '🎯'
+        }
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="mb-1.5 flex items-center gap-2">
+          <h3 className="truncate font-display text-xl font-extrabold tracking-tight text-text">
+            {coach.display_name || 'Coach'}
+          </h3>
+          {coach.is_featured && <Tag tone="success">Featured</Tag>}
         </div>
 
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <h3 className="font-semibold text-white truncate">
-              {coach.display_name || 'Coach'}
-            </h3>
-            {coach.is_featured && (
-              <span className="text-xs px-2 py-0.5 bg-yellow-900 text-yellow-400 rounded-full font-medium flex-shrink-0">
-                Featured
-              </span>
-            )}
+        {coach.bio && (
+          <p className="mb-3 line-clamp-2 text-sm text-text3">{coach.bio}</p>
+        )}
+
+        {/* Specializations */}
+        {coach.specializations?.length > 0 && (
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            {coach.specializations.map(s => (
+              <Tag key={s} tone="spar">{SPECIALIZATION_LABELS[s] || s}</Tag>
+            ))}
           </div>
+        )}
 
-          {coach.bio && (
-            <p className="text-sm text-gray-400 line-clamp-2 mb-3">{coach.bio}</p>
-          )}
-
-          {/* Specializations */}
-          {coach.specializations?.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {coach.specializations.map(s => (
-                <span
-                  key={s}
-                  className="text-xs px-2 py-0.5 bg-gray-800 text-gray-400 rounded-full"
-                >
-                  {SPECIALIZATION_LABELS[s] || s}
-                </span>
-              ))}
+        {/* Stats row */}
+        <div className="flex items-center gap-4 text-xs text-muted">
+          {coach.rating && (
+            <div className="flex items-center gap-1.5">
+              <StarRating value={Math.round(coach.rating)} readonly size="sm" />
+              <span className="tabular-nums">{coach.rating.toFixed(1)}</span>
             </div>
           )}
-
-          {/* Stats row */}
-          <div className="flex items-center gap-4 text-xs text-gray-500">
-            {coach.rating && (
-              <div className="flex items-center gap-1.5">
-                <StarRating value={Math.round(coach.rating)} readonly size="sm" />
-                <span>{coach.rating.toFixed(1)}</span>
-              </div>
-            )}
-            {coach.review_count > 0 && (
-              <span>{coach.review_count} review{coach.review_count !== 1 ? 's' : ''}</span>
-            )}
-            {coach.avg_response_hours && (
-              <span className="text-gray-600">
-                ~{coach.avg_response_hours < 24
-                  ? `${Math.round(coach.avg_response_hours)}h`
-                  : `${Math.round(coach.avg_response_hours / 24)}d`} response
-              </span>
-            )}
-            {coach.review_preference && coach.review_preference !== 'either' && (
-              <span className="text-gray-600">
-                Prefers {coach.review_preference} reviews
-              </span>
-            )}
-            {coach.credit_rate && (
-              <span className="ml-auto text-indigo-400 font-medium">
-                {coach.credit_rate} credits / review
-              </span>
-            )}
-          </div>
+          {coach.review_count > 0 && (
+            <span>{coach.review_count} review{coach.review_count !== 1 ? 's' : ''}</span>
+          )}
+          {coach.avg_response_hours && (
+            <span>
+              ~{coach.avg_response_hours < 24
+                ? `${Math.round(coach.avg_response_hours)}h`
+                : `${Math.round(coach.avg_response_hours / 24)}d`} response
+            </span>
+          )}
+          {coach.review_preference && coach.review_preference !== 'either' && (
+            <span>Prefers {coach.review_preference} reviews</span>
+          )}
+          {coach.credit_rate && (
+            <span className="ml-auto font-display font-bold text-kiwi">
+              {coach.credit_rate} cr / review
+            </span>
+          )}
         </div>
       </div>
+
+      <Button size="sm" className="self-start" onClick={e => { e.stopPropagation(); navigate(`/coaches/${coach.id}`) }}>
+        Book
+      </Button>
     </div>
   )
 }
@@ -128,25 +121,14 @@ export default function MarketplacePage() {
     : coaches
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
-        <button
-          onClick={() => navigate('/dashboard')}
-          className="text-sm text-gray-400 hover:text-white transition-colors"
-        >
-          ← Dashboard
-        </button>
-        <span className="font-bold text-lg tracking-tight">Coach marketplace</span>
-        <UserButton />
-      </nav>
-
-      <main className="max-w-3xl mx-auto px-6 py-10">
-
+    <AppLayout active="marketplace">
+      <div className="mx-auto max-w-3xl px-8 py-10">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-white mb-1">Find a coach</h1>
-          <p className="text-gray-400 text-sm">
-            Get expert feedback on your clips from world-class coaches.
+          <p className="font-display text-[13px] font-semibold uppercase tracking-[0.13em] text-muted">Coach marketplace</p>
+          <h1 className="mt-1 font-display text-[36px] font-extrabold leading-none text-text">Find a coach</h1>
+          <p className="mt-2 text-sm text-text3">
+            Get timestamped feedback on your clips from world-class coaches. Pay in credits.
           </p>
         </div>
 
@@ -155,22 +137,18 @@ export default function MarketplacePage() {
             {[...Array(3)].map((_, i) => <CoachCardSkeleton key={i} />)}
           </div>
         ) : coaches.length === 0 ? (
-          <div className="text-center py-20">
-            <p className="text-gray-500 text-sm">No coaches available yet.</p>
-            <p className="text-gray-600 text-xs mt-1">Check back soon.</p>
+          <div className="py-20 text-center">
+            <p className="text-sm text-muted">No coaches available yet.</p>
+            <p className="mt-1 text-xs text-muted">Check back soon.</p>
           </div>
         ) : (
           <>
             {/* Specialization filter */}
             {allSpecs.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-6">
+              <div className="mb-6 flex flex-wrap gap-2">
                 <button
                   onClick={() => setSelectedSpec(null)}
-                  className={`px-3 py-1.5 rounded-full text-sm transition-colors ${
-                    selectedSpec === null
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-800 text-gray-400 hover:text-white'
-                  }`}
+                  className={`chip ${selectedSpec === null ? 'active' : ''}`}
                 >
                   All
                 </button>
@@ -178,11 +156,7 @@ export default function MarketplacePage() {
                   <button
                     key={s}
                     onClick={() => setSelectedSpec(s === selectedSpec ? null : s)}
-                    className={`px-3 py-1.5 rounded-full text-sm transition-colors ${
-                      selectedSpec === s
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-gray-800 text-gray-400 hover:text-white'
-                    }`}
+                    className={`chip ${selectedSpec === s ? 'active' : ''}`}
                   >
                     {SPECIALIZATION_LABELS[s] || s}
                   </button>
@@ -191,20 +165,20 @@ export default function MarketplacePage() {
             )}
 
             {/* Coach list */}
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3">
               {filtered.map(coach => (
                 <CoachCard key={coach.id} coach={coach} />
               ))}
             </div>
 
             {filtered.length === 0 && (
-              <p className="text-gray-500 text-sm text-center py-10">
+              <p className="py-10 text-center text-sm text-muted">
                 No coaches found for this specialization.
               </p>
             )}
           </>
         )}
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   )
 }

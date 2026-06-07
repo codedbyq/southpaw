@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { UserButton } from '@clerk/react'
 import { useApi } from '../api/client'
+import AppLayout from '../components/AppLayout'
+import Button from '../components/Button'
 import { CoachProfileSkeleton } from '../components/Skeleton'
 
 const SPECIALIZATION_OPTIONS = [
@@ -184,19 +185,15 @@ export default function CoachProfilePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+    <AppLayout active="dashboard">
+      <main className="max-w-2xl mx-auto px-8 py-10">
         <button
           onClick={() => navigate('/dashboard')}
-          className="text-sm text-gray-400 hover:text-white transition-colors"
+          className="mb-6 text-sm text-muted hover:text-text transition-colors"
         >
           ← Dashboard
         </button>
-        <span className="font-bold text-lg tracking-tight">Coach profile</span>
-        <UserButton />
-      </nav>
-
-      <main className="max-w-2xl mx-auto px-6 py-12">
+        <h1 className="mb-8 font-display text-[32px] font-extrabold leading-none text-text">Coach profile</h1>
         {loading ? (
           <CoachProfileSkeleton />
         ) : (
@@ -204,7 +201,7 @@ export default function CoachProfilePage() {
 
             {/* Status banner for new profiles */}
             {isNew && (
-              <div className="p-4 bg-indigo-950 border border-indigo-800 rounded-xl text-sm text-indigo-300">
+              <div className="p-4 bg-kiwi/8 border border-kiwi/40 rounded-xl text-sm text-text2">
                 Set up your coach profile. Once submitted it will be reviewed before appearing in the marketplace.
               </div>
             )}
@@ -214,15 +211,15 @@ export default function CoachProfilePage() {
               <div className="space-y-6">
                 {/* Avatar */}
                 <div>
-                  <label className="block text-sm font-medium text-white mb-3">Profile photo</label>
+                  <label className="block text-sm font-display font-bold uppercase tracking-wide text-text mb-3">Profile photo</label>
                   <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center overflow-hidden flex-shrink-0">
+                    <div className="w-16 h-16 rounded-full bg-surface3 border-2 border-kiwi flex items-center justify-center overflow-hidden flex-shrink-0">
                       {avatarUrl
                         ? <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                         : <span className="text-2xl">🎯</span>
                       }
                     </div>
-                    <label className={`cursor-pointer px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors ${avatarUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    <label className={`btn btn-secondary text-[13px] px-4 py-2 cursor-pointer ${avatarUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
                       {avatarUploading ? 'Uploading...' : 'Upload photo'}
                       <input
                         type="file"
@@ -232,23 +229,23 @@ export default function CoachProfilePage() {
                         onChange={e => e.target.files?.[0] && handleMediaUpload(e.target.files[0], 'avatar')}
                       />
                     </label>
-                    <span className="text-xs text-gray-600">JPEG, PNG or WebP</span>
+                    <span className="text-xs text-muted">JPEG, PNG or WebP</span>
                   </div>
                 </div>
 
                 {/* Intro video */}
                 <div>
-                  <label className="block text-sm font-medium text-white mb-1">Intro video</label>
-                  <p className="text-xs text-gray-500 mb-3">60-90 seconds — tell fighters about your coaching style</p>
+                  <label className="block text-sm font-display font-bold uppercase tracking-wide text-text mb-1">Intro video</label>
+                  <p className="text-xs text-muted mb-3">60-90 seconds — tell fighters about your coaching style</p>
                   {introThumbUrl || introVideoUrl ? (
                     <div className="flex items-center gap-4">
-                      <div className="w-24 h-16 rounded-lg bg-gray-800 overflow-hidden flex-shrink-0">
+                      <div className="w-24 h-16 rounded-lg bg-surface3 overflow-hidden flex-shrink-0">
                         {introThumbUrl
                           ? <img src={introThumbUrl} alt="Intro" className="w-full h-full object-cover" />
-                          : <div className="w-full h-full flex items-center justify-center text-gray-500 text-xs">Video</div>
+                          : <div className="w-full h-full flex items-center justify-center text-muted text-xs">Video</div>
                         }
                       </div>
-                      <label className={`cursor-pointer px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors ${videoUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                      <label className={`btn btn-secondary text-[13px] px-4 py-2 cursor-pointer ${videoUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
                         {videoUploading ? 'Uploading...' : 'Replace video'}
                         <input
                           type="file"
@@ -260,7 +257,7 @@ export default function CoachProfilePage() {
                       </label>
                     </div>
                   ) : (
-                    <label className={`inline-block cursor-pointer px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors ${videoUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    <label className={`btn btn-secondary text-[13px] px-4 py-2 cursor-pointer ${videoUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
                       {videoUploading ? 'Uploading...' : 'Upload intro video'}
                       <input
                         type="file"
@@ -271,51 +268,47 @@ export default function CoachProfilePage() {
                       />
                     </label>
                   )}
-                  <p className="text-xs text-gray-600 mt-2">Max 50MB · MP4 or MOV</p>
+                  <p className="text-xs text-muted mt-2">Max 50MB · MP4 or MOV</p>
                 </div>
 
-                {mediaError && <p className="text-red-400 text-sm">{mediaError}</p>}
+                {mediaError && <p className="text-danger text-sm">{mediaError}</p>}
               </div>
             )}
 
             {/* Display name */}
             <div>
-              <label className="block text-sm font-medium text-white mb-2">Display name</label>
+              <label className="block text-sm font-display font-bold uppercase tracking-wide text-text mb-2">Display name</label>
               <input
                 type="text"
                 value={displayName}
                 onChange={e => setDisplayName(e.target.value)}
                 placeholder="How you'll appear in the marketplace"
-                className="w-full px-4 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-white text-sm placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                className="input"
               />
             </div>
 
             {/* Bio */}
             <div>
-              <label className="block text-sm font-medium text-white mb-2">Bio</label>
+              <label className="block text-sm font-display font-bold uppercase tracking-wide text-text mb-2">Bio</label>
               <textarea
                 value={bio}
                 onChange={e => setBio(e.target.value)}
                 placeholder="Tell fighters about your background, coaching style, and experience..."
                 rows={4}
-                className="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-xl text-white text-sm placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
+                className="input resize-none"
               />
             </div>
 
             {/* Specializations */}
             <div>
-              <label className="block text-sm font-medium text-white mb-3">Specializations</label>
+              <label className="block text-sm font-display font-bold uppercase tracking-wide text-text mb-3">Specializations</label>
               <div className="flex flex-wrap gap-2">
                 {SPECIALIZATION_OPTIONS.map(opt => (
                   <button
                     key={opt.value}
                     type="button"
                     onClick={() => toggleSpec(opt.value)}
-                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                      specializations.includes(opt.value)
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-gray-800 text-gray-400 hover:text-white'
-                    }`}
+                    className={`chip ${specializations.includes(opt.value) ? 'active' : ''}`}
                   >
                     {opt.label}
                   </button>
@@ -325,7 +318,7 @@ export default function CoachProfilePage() {
 
             {/* Credit rate */}
             <div>
-              <label className="block text-sm font-medium text-white mb-2">
+              <label className="block text-sm font-display font-bold uppercase tracking-wide text-text mb-2">
                 Credit rate per clip review
               </label>
               <div className="flex items-center gap-3">
@@ -336,18 +329,18 @@ export default function CoachProfilePage() {
                   value={creditRate}
                   onChange={e => setCreditRate(e.target.value)}
                   placeholder="e.g. 10"
-                  className="w-32 px-4 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
+                  className="input w-32"
                 />
-                <span className="text-sm text-gray-500">credits per review</span>
+                <span className="text-sm text-muted">credits per review</span>
               </div>
-              <p className="text-xs text-gray-600 mt-2">
+              <p className="text-xs text-muted mt-2">
                 Athletes spend credits to request your review. You earn 80% — Southpaw keeps 20%.
               </p>
             </div>
 
             {/* Review preference */}
             <div>
-              <label className="block text-sm font-medium text-white mb-2">Review preference</label>
+              <label className="block text-sm font-display font-bold uppercase tracking-wide text-text mb-2">Review preference</label>
               <div className="flex gap-3">
                 {[
                   { value: 'clip', label: 'Clip', desc: 'Individual rounds' },
@@ -360,27 +353,27 @@ export default function CoachProfilePage() {
                     onClick={() => setReviewPreference(opt.value)}
                     className={`flex-1 p-3 rounded-xl border text-left transition-all ${
                       reviewPreference === opt.value
-                        ? 'border-indigo-500 bg-indigo-950'
-                        : 'border-gray-800 hover:border-gray-600'
+                        ? 'border-kiwi bg-kiwi/8'
+                        : 'border-line hover:border-line2'
                     }`}
                   >
-                    <p className="text-sm font-medium text-white">{opt.label}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{opt.desc}</p>
+                    <p className="text-sm font-medium text-text">{opt.label}</p>
+                    <p className="text-xs text-muted mt-0.5">{opt.desc}</p>
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-gray-600 mt-2">
+              <p className="text-xs text-muted mt-2">
                 This is shown to athletes on your marketplace profile so they know what to submit.
               </p>
             </div>
 
             {/* Stripe Connect payouts */}
             {!isNew && connectStatus && (
-              <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl space-y-3">
+              <div className="p-4 bg-surface border border-line rounded-2xl space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-white">Payouts</p>
-                    <p className="text-xs text-gray-500 mt-0.5">
+                    <p className="text-sm font-medium text-text">Payouts</p>
+                    <p className="text-xs text-muted mt-0.5">
                       {connectStatus.stripe_connected
                         ? connectStatus.payouts_enabled
                           ? `${connectStatus.credits_balance} credits available · $${connectStatus.payout_value_dollars.toFixed(2)}`
@@ -390,35 +383,31 @@ export default function CoachProfilePage() {
                   </div>
 
                   {!connectStatus.stripe_connected || !connectStatus.payouts_enabled ? (
-                    <button
-                      type="button"
-                      onClick={handleConnectOnboard}
-                      disabled={connectLoading}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
-                    >
+                    <Button size="sm" type="button" onClick={handleConnectOnboard} disabled={connectLoading}>
                       {connectLoading ? 'Redirecting...' : connectStatus.stripe_connected ? 'Complete setup' : 'Set up payouts'}
-                    </button>
+                    </Button>
                   ) : (
-                    <button
+                    <Button
+                      variant="outline"
+                      size="sm"
                       type="button"
                       onClick={handlePayout}
                       disabled={!connectStatus.can_payout || payoutLoading}
-                      className="px-4 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
                       title={!connectStatus.can_payout ? `Minimum ${connectStatus.minimum_payout_credits} credits needed` : ''}
                     >
                       {payoutLoading ? 'Processing...' : `Cash out $${connectStatus.payout_value_dollars.toFixed(2)}`}
-                    </button>
+                    </Button>
                   )}
                 </div>
 
                 {payoutResult && (
-                  <p className="text-xs text-green-400">
+                  <p className="text-xs text-kiwi">
                     ✓ ${payoutResult.amount_dollars.toFixed(2)} sent to your bank ({payoutResult.credits_paid} credits)
                   </p>
                 )}
 
                 {connectStatus.payouts_enabled && !connectStatus.can_payout && (
-                  <p className="text-xs text-gray-600">
+                  <p className="text-xs text-muted">
                     Minimum payout is {connectStatus.minimum_payout_credits} credits (${(connectStatus.minimum_payout_credits * 0.25).toFixed(2)})
                   </p>
                 )}
@@ -426,34 +415,26 @@ export default function CoachProfilePage() {
             )}
 
             {/* Moderation note */}
-            <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl text-sm text-gray-400">
+            <div className="p-4 bg-surface border border-line rounded-2xl text-sm text-text3">
               🔍 Profiles are reviewed before appearing in the marketplace. You can update your profile at any time.
             </div>
 
             {error && (
-              <p className="text-red-400 text-sm">{error}</p>
+              <p className="text-danger text-sm">{error}</p>
             )}
 
             <div className="flex gap-3">
-              <button
-                type="submit"
-                disabled={saving}
-                className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium rounded-xl transition-colors"
-              >
+              <Button type="submit" disabled={saving} className="rounded-xl">
                 {saving ? 'Saving...' : isNew ? 'Submit profile' : 'Save changes'}
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/dashboard')}
-                className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium rounded-xl transition-colors"
-              >
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => navigate('/dashboard')} className="rounded-xl">
                 Cancel
-              </button>
+              </Button>
             </div>
 
           </form>
         )}
       </main>
-    </div>
+    </AppLayout>
   )
 }

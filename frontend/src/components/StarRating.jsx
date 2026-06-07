@@ -18,7 +18,7 @@ export default function StarRating({ value, onChange, readonly = false, size = '
           onMouseLeave={() => !readonly && setHovered(null)}
           className={`${starSize} transition-colors ${
             readonly ? 'cursor-default' : 'cursor-pointer'
-          } ${star <= active ? 'text-yellow-400' : 'text-gray-700'}`}
+          } ${star <= active ? 'text-gold' : 'text-line2'}`}
         >
           ★
         </button>

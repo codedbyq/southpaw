@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApi } from '../api/client'
+import AppLayout from '../components/AppLayout'
+import Button from '../components/Button'
+import Tag from '../components/Tag'
 import { CoachCardSkeleton } from '../components/Skeleton'
 
 const STATUS_TABS = ['pending', 'approved', 'rejected']
 
-const STATUS_STYLES = {
-  pending:  'bg-yellow-900 text-yellow-400',
-  approved: 'bg-green-900 text-green-400',
-  rejected: 'bg-red-900 text-red-400',
+const STATUS_TONES = {
+  pending:  'warning',
+  approved: 'success',
+  rejected: 'danger',
 }
 
 export default function AdminPage() {
@@ -79,61 +82,52 @@ export default function AdminPage() {
   }
 
   if (forbidden) return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-      <div className="text-center">
-        <p className="text-red-400 font-medium mb-2">Access denied</p>
-        <button onClick={() => navigate('/dashboard')} className="text-sm text-gray-500 hover:text-white">
-          ← Dashboard
-        </button>
+    <AppLayout active="dashboard">
+      <div className="flex h-full items-center justify-center">
+        <div className="text-center">
+          <p className="mb-2 font-medium text-danger">Access denied</p>
+          <button onClick={() => navigate('/dashboard')} className="text-sm text-muted hover:text-text">
+            ← Dashboard
+          </button>
+        </div>
       </div>
-    </div>
+    </AppLayout>
   )
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-
+    <AppLayout active="dashboard">
       {/* Reject modal */}
       {rejectModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-md p-6 space-y-4">
-            <h2 className="font-semibold text-white">Reject profile</h2>
-            <p className="text-sm text-gray-400">
+          <div className="bg-surface border border-line rounded-2xl w-full max-w-md p-6 space-y-4">
+            <h2 className="font-display font-extrabold uppercase tracking-wide text-text">Reject profile</h2>
+            <p className="text-sm text-text3">
               The coach will be notified with your reason so they can update and resubmit.
             </p>
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Reason (recommended)</label>
+              <label className="text-xs text-muted mb-1 block">Reason (recommended)</label>
               <textarea
                 value={rejectNotes}
                 onChange={e => setRejectNotes(e.target.value)}
                 placeholder="e.g. Bio is too brief, please add more detail about your coaching background and specializations..."
                 rows={3}
                 autoFocus
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-red-500 resize-none"
+                className="input resize-none"
               />
             </div>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => { setRejectModal(null); setRejectNotes('') }}
-                className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">
-                Cancel
-              </button>
-              <button onClick={handleRejectConfirm} disabled={!!actionLoading}
-                className="px-4 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
-                Reject & notify
-              </button>
+              <Button variant="secondary" size="sm" onClick={() => { setRejectModal(null); setRejectNotes('') }}>Cancel</Button>
+              <Button variant="danger" size="sm" onClick={handleRejectConfirm} disabled={!!actionLoading}>Reject & notify</Button>
             </div>
           </div>
         </div>
       )}
 
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
-        <button onClick={() => navigate('/dashboard')} className="text-sm text-gray-400 hover:text-white transition-colors">
-          ← Dashboard
-        </button>
-        <span className="font-bold text-lg tracking-tight">Admin — Coach moderation</span>
-        <div />
-      </nav>
-
-      <main className="max-w-4xl mx-auto px-6 py-10">
+      <main className="max-w-4xl mx-auto px-8 py-10">
+        <div className="mb-8">
+          <p className="font-display text-[13px] font-semibold uppercase tracking-[0.13em] text-muted">Admin</p>
+          <h1 className="mt-1 font-display text-[32px] font-extrabold leading-none text-text">Coach moderation</h1>
+        </div>
 
         {/* Tabs */}
         <div className="flex gap-2 mb-8">
@@ -141,11 +135,7 @@ export default function AdminPage() {
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
-                tab === t
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-gray-800 text-gray-400 hover:text-white'
-              }`}
+              className={`chip ${tab === t ? 'active' : ''}`}
             >
               {t}
             </button>
@@ -157,41 +147,37 @@ export default function AdminPage() {
             {[...Array(3)].map((_, i) => <CoachCardSkeleton key={i} />)}
           </div>
         ) : coaches.length === 0 ? (
-          <p className="text-gray-500 text-sm">No {tab} coach profiles.</p>
+          <p className="text-muted text-sm">No {tab} coach profiles.</p>
         ) : (
           <div className="flex flex-col gap-4">
             {coaches.map(coach => (
-              <div key={coach.id} className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+              <div key={coach.id} className="bg-surface border border-line rounded-2xl p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 mb-2">
-                      <h3 className="font-semibold text-white">{coach.display_name || 'No display name'}</h3>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES[coach.moderation_status]}`}>
-                        {coach.moderation_status}
-                      </span>
-                      {coach.is_featured && (
-                        <span className="text-xs px-2 py-0.5 bg-yellow-900 text-yellow-400 rounded-full">Featured</span>
-                      )}
+                      <h3 className="font-display font-extrabold text-text">{coach.display_name || 'No display name'}</h3>
+                      <Tag tone={STATUS_TONES[coach.moderation_status]}>{coach.moderation_status}</Tag>
+                      {coach.is_featured && <Tag tone="gold">Featured</Tag>}
                     </div>
 
                     {coach.bio && (
-                      <p className="text-sm text-gray-400 mb-2 line-clamp-2">{coach.bio}</p>
+                      <p className="text-sm text-text3 mb-2 line-clamp-2">{coach.bio}</p>
                     )}
 
                     <div className="flex flex-wrap gap-1.5 mb-2">
                       {coach.specializations.map(s => (
-                        <span key={s} className="text-xs px-2 py-0.5 bg-gray-800 text-gray-400 rounded-full">{s}</span>
+                        <Tag key={s} tone="spar">{s}</Tag>
                       ))}
                     </div>
 
-                    <div className="flex items-center gap-4 text-xs text-gray-500">
+                    <div className="flex items-center gap-4 text-xs text-muted">
                       {coach.credit_rate && <span>{coach.credit_rate} credits/review</span>}
                       <span>{coach.review_count} reviews</span>
                       <span>Joined {new Date(coach.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                     </div>
 
                     {coach.moderation_notes && (
-                      <p className="text-xs text-amber-500 mt-2">Notes: {coach.moderation_notes}</p>
+                      <p className="text-xs text-warning mt-2">Notes: {coach.moderation_notes}</p>
                     )}
                   </div>
 
@@ -199,47 +185,27 @@ export default function AdminPage() {
                   <div className="flex flex-col gap-2 flex-shrink-0">
                     {coach.moderation_status === 'pending' && (
                       <>
-                        <button
-                          onClick={() => handleApprove(coach.id)}
-                          disabled={actionLoading === coach.id}
-                          className="px-4 py-1.5 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
-                        >
+                        <Button size="sm" onClick={() => handleApprove(coach.id)} disabled={actionLoading === coach.id}>
                           Approve
-                        </button>
-                        <button
-                          onClick={() => setRejectModal(coach)}
-                          disabled={actionLoading === coach.id}
-                          className="px-4 py-1.5 bg-red-900 hover:bg-red-800 disabled:opacity-50 text-red-300 text-xs font-medium rounded-lg transition-colors"
-                        >
+                        </Button>
+                        <Button variant="danger" size="sm" onClick={() => setRejectModal(coach)} disabled={actionLoading === coach.id}>
                           Reject
-                        </button>
+                        </Button>
                       </>
                     )}
                     {coach.moderation_status === 'rejected' && (
-                      <button
-                        onClick={() => handleApprove(coach.id)}
-                        disabled={actionLoading === coach.id}
-                        className="px-4 py-1.5 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
-                      >
+                      <Button size="sm" onClick={() => handleApprove(coach.id)} disabled={actionLoading === coach.id}>
                         Approve
-                      </button>
+                      </Button>
                     )}
                     {coach.moderation_status === 'approved' && (
                       <>
-                        <button
-                          onClick={() => handleToggleFeatured(coach.id)}
-                          disabled={actionLoading === coach.id}
-                          className="px-4 py-1.5 bg-yellow-900 hover:bg-yellow-800 disabled:opacity-50 text-yellow-300 text-xs font-medium rounded-lg transition-colors"
-                        >
+                        <Button variant="outline" size="sm" onClick={() => handleToggleFeatured(coach.id)} disabled={actionLoading === coach.id}>
                           {coach.is_featured ? 'Unfeature' : 'Feature'}
-                        </button>
-                        <button
-                          onClick={() => setRejectModal(coach)}
-                          disabled={actionLoading === coach.id}
-                          className="px-4 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-400 text-xs rounded-lg transition-colors"
-                        >
+                        </Button>
+                        <Button variant="secondary" size="sm" onClick={() => setRejectModal(coach)} disabled={actionLoading === coach.id}>
                           Suspend
-                        </button>
+                        </Button>
                       </>
                     )}
                   </div>
@@ -249,6 +215,6 @@ export default function AdminPage() {
           </div>
         )}
       </main>
-    </div>
+    </AppLayout>
   )
 }

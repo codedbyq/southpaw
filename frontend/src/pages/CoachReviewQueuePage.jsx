@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { UserButton } from '@clerk/react'
 import { useApi } from '../api/client'
+import AppLayout from '../components/AppLayout'
+import Button from '../components/Button'
+import Tag from '../components/Tag'
 import { ReviewCardSkeleton } from '../components/Skeleton'
 
-const STATUS_STYLES = {
-  pending:   'bg-yellow-900 text-yellow-400',
-  in_review: 'bg-blue-900 text-blue-400',
-  complete:  'bg-green-900 text-green-400',
-  cancelled: 'bg-gray-800 text-gray-500',
+const STATUS_TONES = {
+  pending:   'warning',
+  in_review: 'pads',
+  complete:  'success',
+  cancelled: 'muted',
 }
 
 const STATUS_LABELS = {
@@ -116,72 +118,73 @@ export default function CoachReviewQueuePage() {
   const inReview = reviews.filter(r => r.status === 'in_review')
   const completed = reviews.filter(r => r.status === 'complete')
 
-  return (
-    <div className="min-h-screen bg-gray-950 text-white">
+  // Credits waiting to be earned across open reviews
+  const creditsWaiting = [...pending, ...inReview].reduce((sum, r) => sum + (r.credits_cost || 0), 0)
 
+  return (
+    <AppLayout active="reviews">
       {/* Cancel modal */}
       {cancelModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-md p-6 space-y-4">
-            <h2 className="font-semibold text-white">Cancel review</h2>
-            <p className="text-sm text-gray-400">
-              The athlete will receive a full refund of <span className="text-white font-medium">{cancelModal.credits_cost} credits</span>.
+          <div className="bg-surface border border-line rounded-2xl w-full max-w-md p-6 space-y-4">
+            <h2 className="font-display font-extrabold uppercase tracking-wide text-text">Cancel review</h2>
+            <p className="text-sm text-text3">
+              The athlete will receive a full refund of <span className="text-text font-medium">{cancelModal.credits_cost} credits</span>.
               Let them know why so they can resubmit better footage.
             </p>
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Reason (optional but helpful)</label>
+              <label className="text-xs text-muted mb-1 block">Reason (optional but helpful)</label>
               <textarea
                 value={cancelReason}
                 onChange={e => setCancelReason(e.target.value)}
                 placeholder="e.g. Camera angle makes it impossible to see keypoints clearly, or footage is too dark..."
                 rows={3}
                 autoFocus
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-red-500 resize-none"
+                className="input resize-none"
               />
             </div>
             <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => { setCancelModal(null); setCancelReason('') }}
-                className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors"
-              >
+              <Button variant="secondary" size="sm" onClick={() => { setCancelModal(null); setCancelReason('') }}>
                 Keep review
-              </button>
-              <button
-                onClick={handleCancelConfirm}
-                disabled={cancelling}
-                className="px-4 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
-              >
+              </Button>
+              <Button variant="danger" size="sm" onClick={handleCancelConfirm} disabled={cancelling}>
                 {cancelling ? 'Cancelling...' : 'Cancel & refund'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
 
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
-        <button onClick={() => navigate('/dashboard')} className="text-sm text-gray-400 hover:text-white transition-colors">
-          ← Dashboard
-        </button>
-        <span className="font-bold text-lg tracking-tight">Review queue</span>
-        <UserButton />
-      </nav>
+      <main className="max-w-3xl mx-auto px-8 py-10 space-y-10">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="font-display text-[13px] font-semibold uppercase tracking-[0.13em] text-muted">Coach</p>
+            <h1 className="mt-1 font-display text-[32px] font-extrabold leading-none text-text">Review queue</h1>
+          </div>
+          {creditsWaiting > 0 && (
+            <div className="flex items-center gap-1.5 rounded-full border border-kiwi/40 bg-kiwi/8 px-4 py-2">
+              <span className="text-kiwi">⚡</span>
+              <span className="font-display font-bold tabular-nums text-kiwi">{creditsWaiting}</span>
+              <span className="text-xs text-text3">credits waiting</span>
+            </div>
+          )}
+        </div>
 
-      <main className="max-w-3xl mx-auto px-6 py-10 space-y-10">
         {loading ? (
           <div className="space-y-3">
             {[...Array(3)].map((_, i) => <ReviewCardSkeleton key={i} />)}
           </div>
         ) : reviews.length === 0 ? (
           <div className="text-center py-20">
-            <p className="text-gray-400 text-sm">No review requests yet.</p>
-            <p className="text-gray-600 text-xs mt-1">When athletes request your review it will appear here.</p>
+            <p className="text-text3 text-sm">No review requests yet.</p>
+            <p className="text-muted text-xs mt-1">When athletes request your review it will appear here.</p>
           </div>
         ) : (
           <div className="space-y-10">
             {/* Pending + In Review */}
             {[...pending, ...inReview].length > 0 && (
               <div>
-                <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-4">
+                <h2 className="text-sm font-display font-bold text-muted uppercase tracking-wide mb-4">
                   Action needed ({[...pending, ...inReview].length})
                 </h2>
                 <div className="flex flex-col gap-3">
@@ -202,7 +205,7 @@ export default function CoachReviewQueuePage() {
             {/* Completed */}
             {completed.length > 0 && (
               <div>
-                <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-4">
+                <h2 className="text-sm font-display font-bold text-muted uppercase tracking-wide mb-4">
                   Completed ({completed.length})
                 </h2>
                 <div className="flex flex-col gap-3">
@@ -220,91 +223,73 @@ export default function CoachReviewQueuePage() {
 
             {hasMore && (
               <div className="text-center">
-                <button
-                  onClick={loadMore}
-                  disabled={loadingMore}
-                  className="px-4 py-2 text-sm text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
-                >
+                <Button variant="secondary" size="sm" onClick={loadMore} disabled={loadingMore}>
                   {loadingMore ? 'Loading...' : 'Load more reviews'}
-                </button>
+                </Button>
               </div>
             )}
           </div>
         )}
       </main>
-    </div>
+    </AppLayout>
   )
 }
 
 
 function ReviewCard({ review, onStartReview, onComplete, onCancel, actionLoading }) {
+  const accent = review.status === 'complete' ? 'border-l-kiwi'
+    : review.status === 'in_review' ? 'border-l-sport-pads'
+    : 'border-l-warning'
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-start gap-4">
+    <div className={`bg-surface border border-line border-l-2 ${accent} rounded-2xl p-4 flex items-start gap-4`}>
       {/* Thumbnail */}
-      <div className="w-16 h-12 rounded-lg bg-gray-800 flex-shrink-0 overflow-hidden">
+      <div className="w-16 h-12 rounded-lg bg-surface3 flex-shrink-0 overflow-hidden">
         {review.clip_thumbnail_url
           ? <img src={review.clip_thumbnail_url} alt="" className="w-full h-full object-cover" />
-          : <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">🎬</div>
+          : <div className="w-full h-full flex items-center justify-center text-muted text-xs">🎬</div>
         }
       </div>
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          <p className="text-sm text-white font-medium truncate">
+          <p className="text-sm text-text font-medium truncate">
             {review.review_type === 'session'
               ? `Session: ${review.session_label || 'Untitled session'}`
               : review.clip_filename || 'Clip'}
           </p>
-          <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${STATUS_STYLES[review.status]}`}>
-            {STATUS_LABELS[review.status]}
-          </span>
+          <Tag tone={STATUS_TONES[review.status]}>{STATUS_LABELS[review.status]}</Tag>
         </div>
 
         {review.athlete_note && (
-          <p className="text-xs text-gray-400 mb-1">"{review.athlete_note}"</p>
+          <p className="text-xs text-text3 mb-1">"{review.athlete_note}"</p>
         )}
 
-        <p className="text-xs text-gray-600">
+        <p className="text-xs text-muted">
           {new Date(review.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-          {' · '}{review.credits_cost} credits
+          {' · '}<span className="font-display font-bold text-kiwi tabular-nums">{review.credits_cost} cr</span>
         </p>
       </div>
 
       <div className="flex flex-col gap-2 flex-shrink-0">
         {review.status !== 'complete' && (
-          <button
-            onClick={onStartReview}
-            disabled={actionLoading}
-            className="text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg transition-colors"
-          >
+          <Button size="sm" onClick={onStartReview} disabled={actionLoading}>
             {review.status === 'in_review' ? 'Continue' : 'Start review'}
-          </button>
+          </Button>
         )}
         {review.status === 'in_review' && onComplete && (
-          <button
-            onClick={onComplete}
-            disabled={actionLoading}
-            className="text-xs px-3 py-1.5 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white rounded-lg transition-colors"
-          >
+          <Button variant="outline" size="sm" onClick={onComplete} disabled={actionLoading}>
             Mark complete
-          </button>
+          </Button>
         )}
         {review.status === 'complete' && (
-          <button
-            onClick={onStartReview}
-            className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded-lg transition-colors"
-          >
+          <Button variant="secondary" size="sm" onClick={onStartReview}>
             View clip
-          </button>
+          </Button>
         )}
         {['pending', 'in_review'].includes(review.status) && onCancel && (
-          <button
-            onClick={onCancel}
-            disabled={actionLoading}
-            className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-red-900 text-gray-500 hover:text-red-400 disabled:opacity-50 rounded-lg transition-colors"
-          >
+          <Button variant="ghost" size="sm" onClick={onCancel} disabled={actionLoading}>
             Cancel
-          </button>
+          </Button>
         )}
       </div>
     </div>

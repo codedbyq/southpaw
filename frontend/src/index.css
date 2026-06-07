@@ -1,1 +1,160 @@
+/* ============================================================================
+   Southpaw — src/index.css  ·  "Electric Kiwi" rebrand
+   Tailwind v4. The @theme block registers brand tokens AS utilities
+   (bg-kiwi, text-kiwi, border-line, font-display, …) and overrides the stock
+   palette the app already uses so legacy classes shift toward the new look.
+   Lime is bright — text/icons ON lime are ALWAYS black (text-black).
+   ============================================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Barlow:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
+
+@theme {
+  /* ---- Fonts → font-display / font-sans ---- */
+  --font-display: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --font-sans: 'Barlow', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* ---- Brand surfaces → bg-ink / bg-surface / … ---- */
+  --color-ink: #000000;
+  --color-surface: #0f0f0f;
+  --color-surface2: #1a1a1a;
+  --color-surface3: #242424;
+  --color-line: #1f1f1f;
+  --color-line2: #333333;
+
+  /* ---- Text ramp → text-text / text-text2 / … ---- */
+  --color-text: #f0f0f0;
+  --color-text2: #cccccc;
+  --color-text3: #aaaaaa;
+  --color-muted: #666666;
+
+  /* ---- Electric lime → bg-kiwi / text-kiwi / border-kiwi ---- */
+  --color-kiwi: #ccff00;
+  --color-kiwi-bright: #dfff00;
+  --color-kiwi-dim: #a3cc00;
+
+  /* ---- Status ---- */
+  --color-success: #ccff00;
+  --color-warning: #ff9500;
+  --color-danger: #ff3b30;
+  --color-gold: #ffd700;
+
+  /* ---- Sport tags ---- */
+  --color-sport-boxing: #ccff00;
+  --color-sport-muaythai: #ffa500;
+  --color-sport-mma: #ff5050;
+  --color-sport-pads: #64b4ff;
+  --color-sport-spar: #aaaaaa;
+
+  /* ---- Strike data-viz ramp ---- */
+  --color-strike-jab: #ccff00;
+  --color-strike-cross: #dfff00;
+  --color-strike-hook: #88ff00;
+  --color-strike-rearkick: #ff9500;
+  --color-strike-roundhouse: #ff6b00;
+
+  /* ---- Radii ---- */
+  --radius-badge: 0.25rem; /* 4px sharp tags */
+
+  /* ---- Lime glow shadow → shadow-glow ---- */
+  --shadow-glow: 0 0 16px rgba(204, 255, 0, 0.3);
+
+  /* ---- Override the stock palette legacy classes reference so existing
+     `bg-gray-950`, `bg-indigo-600`, etc. shift toward the new look on import. ---- */
+  --color-gray-950: #000000;
+  --color-gray-900: #0f0f0f;
+  --color-gray-800: #1a1a1a;
+  --color-gray-700: #333333;
+  --color-gray-600: #525252;
+  --color-gray-500: #737373;
+  --color-gray-400: #aaaaaa;
+  --color-gray-300: #cccccc;
+
+  --color-indigo-600: #ccff00;
+  --color-indigo-500: #dfff00;
+  --color-indigo-400: #ccff00;
+  --color-indigo-300: #ccff00;
+  --color-indigo-900: #1a2600;
+  --color-indigo-950: #1a1a1a;
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────── */
+body {
+  background: var(--color-ink);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: rgba(204, 255, 0, .3); color: #000; }
+
+/* Thin lime-ish scrollbars to match the mocks */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--color-surface3); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Motion ─────────────────────────────────────────────────────────────── */
+@keyframes ai-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.animate-ai-pulse { animation: ai-pulse 2s ease-in-out infinite; }
+
+/* ── Buttons — own the text-black-on-lime rule in one place ─────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+  font-family: var(--font-display); font-weight: 700; text-transform: uppercase;
+  letter-spacing: .03em; border-radius: 10px; padding: .55rem 1.25rem;
+  border: 1px solid transparent; cursor: pointer; white-space: nowrap;
+  transition: background-color .2s, color .2s, transform .2s, box-shadow .2s, border-color .2s;
+}
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn:disabled:hover { transform: none; box-shadow: none; }
+
+.btn-primary { background: var(--color-kiwi); color: #000; }
+.btn-primary:not(:disabled):hover { background: var(--color-kiwi-bright); transform: translateY(-1px); box-shadow: var(--shadow-glow); }
+
+.btn-outline { background: transparent; border-color: var(--color-kiwi); color: var(--color-kiwi); }
+.btn-outline:not(:disabled):hover { background: rgba(204, 255, 0, .08); }
+
+.btn-secondary { background: var(--color-surface2); color: var(--color-text2); }
+.btn-secondary:not(:disabled):hover { background: var(--color-surface3); }
+
+.btn-ghost { background: transparent; color: var(--color-text3); }
+.btn-ghost:not(:disabled):hover { color: var(--color-text); }
+
+.btn-danger { background: rgba(255, 59, 48, .12); color: var(--color-danger); }
+.btn-danger:not(:disabled):hover { background: rgba(255, 59, 48, .2); }
+
+/* ── Sharp 4px sport/status tags — the signature badge ──────────────────── */
+.tag {
+  display: inline-flex; align-items: center; gap: .25rem; border-radius: var(--radius-badge);
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 8px; white-space: nowrap; line-height: 1.4;
+}
+.tag-boxing   { background: rgba(204,255,0,.12);  color: var(--color-sport-boxing); }
+.tag-muaythai { background: rgba(255,165,0,.12);  color: var(--color-sport-muaythai); }
+.tag-mma      { background: rgba(255,80,80,.12);   color: var(--color-sport-mma); }
+.tag-pads     { background: rgba(100,180,255,.12); color: var(--color-sport-pads); }
+.tag-spar     { background: rgba(170,170,170,.12); color: var(--color-sport-spar); }
+.tag-success  { background: rgba(204,255,0,.12);  color: var(--color-kiwi); }
+.tag-warning  { background: rgba(255,149,0,.12);  color: var(--color-warning); }
+.tag-danger   { background: rgba(255,59,48,.15);   color: var(--color-danger); }
+.tag-gold     { background: rgba(255,215,0,.15);   color: var(--color-gold); }
+.tag-muted    { background: rgba(120,120,120,.12); color: var(--color-text3); }
+
+/* ── Pill filter chip ───────────────────────────────────────────────────── */
+.chip {
+  font-family: var(--font-sans); font-size: 11px; font-weight: 700;
+  padding: 3px 12px; border-radius: 9999px; text-transform: uppercase; letter-spacing: .04em;
+  cursor: pointer; border: 1px solid var(--color-line2); color: var(--color-muted);
+  background: transparent; transition: all .15s;
+}
+.chip:hover { border-color: var(--color-text3); color: var(--color-text3); }
+.chip.active { border-color: var(--color-kiwi); color: var(--color-kiwi); background: rgba(204,255,0,.08); }
+
+/* ── Inputs — lime focus border, no ring ────────────────────────────────── */
+.input {
+  background: var(--color-surface2); border: 1px solid var(--color-line2);
+  border-radius: 10px; padding: .5rem .75rem; font-size: 14px;
+  color: var(--color-text); font-family: var(--font-sans); width: 100%;
+}
+.input::placeholder { color: var(--color-muted); }
+.input:focus { outline: none; border-color: var(--color-kiwi); }
