@@ -201,6 +201,24 @@ def _aggregate_velocity_and_recovery(strikes) -> dict:
     }
 
 
+def _quality_grade(score: float | None) -> str | None:
+    if score is None:
+        return None
+    return "good" if score >= 0.7 else "limited" if score >= 0.5 else "low"
+
+
+def _build_data_quality(pose_quality_score, subject_confidence) -> dict | None:
+    """Footage-quality block for the LLM payload — drives hedging rules so the
+    model never coaches confidently on unreliable data."""
+    if pose_quality_score is None and subject_confidence is None:
+        return None
+    return {
+        "pose_quality_score": pose_quality_score,
+        "grade": _quality_grade(pose_quality_score),
+        "subject_confidence": subject_confidence,
+    }
+
+
 def build_clip_summary(clip, strikes, user=None) -> dict:
     """Summary for a single clip — same dict shape as build_session_summary."""
     duration = clip.duration_seconds or 0
@@ -208,7 +226,11 @@ def build_clip_summary(clip, strikes, user=None) -> dict:
     agg = _aggregate_strikes(strikes)
     return {
         "sport": clip.sport,
-        "session_type": None,
+        "session_type": getattr(clip, "clip_type", None),
+        "data_quality": _build_data_quality(
+            getattr(clip, "pose_quality_score", None),
+            getattr(clip, "subject_confidence", None),
+        ),
         "athlete_notes": getattr(clip, "notes", None),
         "experience_level": getattr(user, "experience_level", None) if user else None,
         "training_phase": None,
@@ -238,9 +260,18 @@ def build_session_summary(session, clips, strikes, user=None) -> dict:
     stances = [c.stance for c in clips if getattr(c, "stance", None) not in (None, "unknown")]
     stance = max(set(stances), key=stances.count) if stances else None
 
+    # Session quality = the worst clip's quality — one bad clip can distort
+    # the aggregates, so hedge to the weakest link.
+    q_scores = [c.pose_quality_score for c in clips if getattr(c, "pose_quality_score", None) is not None]
+    s_confs = [c.subject_confidence for c in clips if getattr(c, "subject_confidence", None) is not None]
+
     return {
         "sport": session.sport,
         "session_type": session.session_type,
+        "data_quality": _build_data_quality(
+            min(q_scores) if q_scores else None,
+            min(s_confs) if s_confs else None,
+        ),
         "athlete_notes": getattr(session, "notes", None),
         "training_phase": getattr(session, "training_phase", None),
         "opponent_context": getattr(session, "opponent_context", None),
@@ -301,6 +332,14 @@ def build_feedback_prompt(summary: dict) -> tuple[str, str]:
     training_phase = summary.get("training_phase")
     phase_ctx = TRAINING_PHASE_CONTEXT.get(training_phase, "") if training_phase else ""
 
+    dq = summary.get("data_quality") or {}
+    grade = dq.get("grade")
+    quality_note = ""
+    if grade in ("limited", "low"):
+        quality_note = (
+            f"\n- This clip's footage quality grade is '{grade}' — stay tentative and lead with what is reliable."
+        )
+
     system = f"""You are an elite martial arts coach specializing in {sport_label} with decades of experience training competitive fighters.
 {sport_ctx}
 
@@ -329,7 +368,12 @@ Rules:
 - If the athlete stated a focus/context, tailor feedback to that intent
 - Calibrate tone and standards to their experience level
 - Keep total response under 250 words
-- No filler phrases. No "great job". Be a coach, not a cheerleader."""
+- No filler phrases. No "great job". Be a coach, not a cheerleader.
+
+CONFIDENCE POLICY (non-negotiable):
+- Only discuss metrics that appear in the data block. Never invent or estimate a number that isn't provided.
+- If a "Footage quality" line says limited or low, acknowledge once that footage quality limits the analysis, keep claims to the most reliable metrics (strike counts, timing), and avoid strong conclusions about fine technique.
+- Distinguish what was measured (counts, rates, distances) from what you infer (fatigue, habits). Frame inferences as such.{quality_note}"""
 
     lines = [f"Sport: {sport_label}"]
     lines.append(f"Experience level: {experience_level}")
@@ -345,6 +389,14 @@ Rules:
 
     if summary.get("stance"):
         lines.append(f"Detected stance: {summary['stance']}")
+
+    if grade:
+        q_line = f"Footage quality: {grade}"
+        if dq.get("pose_quality_score") is not None:
+            q_line += f" (score {dq['pose_quality_score']})"
+        if dq.get("subject_confidence") is not None and dq["subject_confidence"] < 0.5:
+            q_line += " — subject identification was uncertain (multiple people in frame)"
+        lines.append(q_line)
 
     if summary["session_type"]:
         lines.append(f"Session type: {SESSION_TYPE_LABELS.get(summary['session_type'], summary['session_type'])}")
@@ -375,7 +427,7 @@ Rules:
 
     gd = summary["guard_discipline"]
     if gd["drop_rate"] is not None:
-        lines.append(f"\nGuard discipline (% of strikes where guard hand fell below nose):")
+        lines.append(f"\nGuard discipline (% of strikes where the guard hand fell below shoulder level):")
         lines.append(f"  Overall: {round(gd['drop_rate'] * 100)}% dropped ({gd['dropped_count']}/{gd['total_measured']} measured)")
         for t, entry in sorted(gd["by_type"].items(), key=lambda x: -(x[1]["rate"] or 0)):
             label = t.replace("_", " ").title()
@@ -383,7 +435,7 @@ Rules:
 
     ext = summary["arm_extension"]
     if ext["avg"] is not None:
-        lines.append(f"\nArm extension (shoulder-to-wrist, 0–1 scale, higher = more extended):")
+        lines.append(f"\nArm extension (shoulder-to-wrist in torso-lengths, ~1.0 = fully extended, higher = more committed):")
         lines.append(f"  Average: {ext['avg']}")
         for t, avg in sorted(ext["by_type"].items(), key=lambda x: -x[1]):
             label = t.replace("_", " ").title()

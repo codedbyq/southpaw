@@ -8,5 +8,7 @@ from models.clip_comment import ClipComment
 from models.clip_review import ClipReview
 from models.credit_transaction import CreditTransaction
 from models.notification import Notification
+from models.identity_sample import IdentitySample
+from models.strike_label import StrikeLabel
 
-__all__ = ["Clip", "Job", "Strike", "Session", "User", "CoachProfile", "ClipComment", "ClipReview", "CreditTransaction", "Notification"]
+__all__ = ["Clip", "Job", "Strike", "Session", "User", "CoachProfile", "ClipComment", "ClipReview", "CreditTransaction", "Notification", "IdentitySample", "StrikeLabel"]

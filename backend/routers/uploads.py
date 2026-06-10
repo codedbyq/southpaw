@@ -13,6 +13,7 @@ from core.s3 import (
     complete_multipart_upload,
     abort_multipart_upload,
 )
+from core.config import settings
 from dependencies import get_current_user
 # from worker.tasks import process_clip
 from db.session import get_db
@@ -27,7 +28,12 @@ _run_inference = None
 def get_inference_function():
     global _run_inference
     if _run_inference is None:
-        _run_inference = modal.Function.from_name("southpaw-inference", "run_inference")
+        # MODAL_ENVIRONMENT selects which deployed env to call (e.g. "dev").
+        # Empty → Modal's default environment (prod), so prod is unaffected.
+        _run_inference = modal.Function.from_name(
+            "southpaw-inference", "run_inference",
+            environment_name=settings.MODAL_ENVIRONMENT or None,
+        )
     return _run_inference
 
 ALLOWED_CONTENT_TYPES = {"video/mp4", "video/quicktime", "video/x-msvideo"}
@@ -127,6 +133,9 @@ async def upload_init(
         session = session_result.scalar_one_or_none()
         if session:
             session.llm_summary_dirty = True
+            # clip_type drives sport-specific classifier thresholds + LLM framing
+            if session.session_type and not clip.clip_type:
+                clip.clip_type = session.session_type
             await db.commit()
 
     upload_url = generate_presigned_upload_url(s3_key, body.content_type)
@@ -283,6 +292,9 @@ async def multipart_init(
         session = session_result.scalar_one_or_none()
         if session:
             session.llm_summary_dirty = True
+            # clip_type drives sport-specific classifier thresholds + LLM framing
+            if session.session_type and not clip.clip_type:
+                clip.clip_type = session.session_type
             await db.commit()
 
     # Create multipart upload on S3

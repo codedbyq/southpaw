@@ -1,6 +1,6 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 from datetime import datetime
@@ -25,6 +25,8 @@ class JobSummary(BaseModel):
     id: str
     status: str
     progress: int
+    error: str | None = None
+    error_code: str | None = None
 
     class Config:
         from_attributes = True
@@ -38,6 +40,11 @@ class ClipResponse(BaseModel):
     sport: str
     notes: str | None
     head_movement_score: float | None
+    selected_subject_id: int | None = None
+    subject_confidence: float | None = None
+    pose_quality_score: float | None = None
+    pipeline_version: str | None = None
+    clip_type: str | None = None
     session_id: str | None
     feedback: str | None
     created_at: datetime
@@ -99,6 +106,113 @@ async def get_clip_feedback(
     if not clip.feedback:
         raise HTTPException(status_code=404, detail="Feedback not yet available")
     return {"feedback": clip.feedback}
+
+
+class SelectSubjectRequest(BaseModel):
+    subject_id: int
+
+
+@router.post("/{clip_id}/select-subject", response_model=ClipResponse)
+async def select_subject(
+    clip_id: uuid.UUID,
+    body: SelectSubjectRequest,
+    clerk_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Switch which tracked subject's metrics/feedback this clip shows.
+    Re-derives strikes from the stored keypoints JSON — no re-running YOLO."""
+    import json
+    from core.s3 import s3_client
+    from core.config import settings
+    from models.strike import Strike
+    from services.clip_metrics import (
+        strikes_for_subject, apply_recovery_seconds, compute_head_movement, detect_stance,
+    )
+    from services.feedback import build_clip_summary, generate_feedback
+
+    clip = await _get_clip_for_user(clip_id, clerk_user_id, db)
+    job = (await db.execute(select(Job).where(Job.clip_id == clip.id))).scalar_one_or_none()
+    if job is None or not job.result_s3_key:
+        raise HTTPException(status_code=400, detail="Clip has no processed keypoint data")
+
+    try:
+        obj = s3_client.get_object(Bucket=settings.S3_BUCKET_NAME, Key=job.result_s3_key)
+        data = json.loads(obj["Body"].read())
+    except Exception:
+        raise HTTPException(status_code=502, detail="Could not load keypoint data")
+    frames = data.get("frames", [])
+
+    subject_id = body.subject_id
+    subject_strikes = strikes_for_subject(frames, subject_id)
+    apply_recovery_seconds(subject_strikes)
+
+    # Swap this clip's strike rows for the chosen subject's. Low-confidence
+    # strikes stay in the JSON but out of metrics — same rule as the pipeline.
+    await db.execute(delete(Strike).where(Strike.job_id == job.id))
+    new_rows = []
+    for s in subject_strikes:
+        if s.get("low_confidence"):
+            continue
+        row = Strike(
+            job_id=job.id,
+            type=s["type"],
+            timestamp_seconds=s["timestamp_seconds"],
+            frame_index=s["frame_index"],
+            subject_id=s.get("subject_id", subject_id),
+            confidence=s.get("confidence"),
+            arm_extension=s.get("arm_extension"),
+            guard_dropped=s.get("guard_dropped"),
+            peak_velocity=s.get("peak_velocity"),
+            recovery_seconds=s.get("recovery_seconds"),
+            hip_rotation=s.get("hip_rotation"),
+        )
+        db.add(row)
+        new_rows.append(row)
+
+    # Recompute subject-scoped clip metrics
+    head = compute_head_movement(frames, subject_id)
+    if head is not None:
+        clip.head_movement_score = head
+    clip.stance = detect_stance(frames, subject_id)
+    clip.selected_subject_id = subject_id
+    await db.flush()
+
+    user = (await db.execute(select(User).where(User.clerk_user_id == clerk_user_id))).scalar_one_or_none()
+
+    # A manual pick is a labeled identity sample ("this subject = me") — the
+    # selector doubles as the ReID labeling UI. Consent-gated (BIPA et al.).
+    if user is not None and user.biometric_consent_at is not None:
+        from models.identity_sample import IdentitySample
+        from services.clip_metrics import skeletal_stats
+
+        await db.execute(delete(IdentitySample).where(IdentitySample.clip_id == clip.id))
+        db.add(IdentitySample(
+            user_id=user.id,
+            clip_id=clip.id,
+            subject_id=subject_id,
+            pipeline_version=clip.pipeline_version,
+            source="manual",
+            skeletal_stats=skeletal_stats(frames, subject_id),
+            confidence=1.0,  # user-confirmed
+        ))
+        await db.flush()
+
+    # Regenerate clip feedback for the new subject
+    try:
+        summary = build_clip_summary(clip, new_rows, user=user)
+        llm_model = "deepseek-reasoner" if (user and user.subscription_tier == "elite") else "deepseek-chat"
+        clip.feedback = await generate_feedback(summary, llm_model=llm_model)
+    except Exception:
+        clip.feedback = None
+
+    # Mark parent session dirty so its cached feedback regenerates
+    if clip.session_id:
+        session_obj = (await db.execute(select(Session).where(Session.id == clip.session_id))).scalar_one_or_none()
+        if session_obj:
+            session_obj.llm_summary_dirty = True
+
+    await db.commit()
+    return await _build_clip_response(clip, db)
 
 
 @router.delete("/{clip_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -406,6 +520,11 @@ async def _build_clip_response(clip: Clip, db: AsyncSession) -> ClipResponse:
         sport=clip.sport,
         notes=clip.notes,
         head_movement_score=clip.head_movement_score,
+        selected_subject_id=clip.selected_subject_id,
+        subject_confidence=clip.subject_confidence,
+        pose_quality_score=clip.pose_quality_score,
+        pipeline_version=clip.pipeline_version,
+        clip_type=clip.clip_type,
         session_id=str(clip.session_id) if clip.session_id else None,
         feedback=clip.feedback,
         created_at=clip.created_at,
@@ -413,6 +532,8 @@ async def _build_clip_response(clip: Clip, db: AsyncSession) -> ClipResponse:
             id=str(job.id),
             status=job.status,
             progress=job.progress,
+            error=job.error,
+            error_code=job.error_code,
         ) if job else None,
         result_url=result_url,
         video_url=video_url,
