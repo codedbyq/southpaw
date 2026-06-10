@@ -28,9 +28,20 @@ const STRIKE_COLORS = {
 }
 
 const DEFAULT_SKELETON_COLOR = '#ccff00'   // electric lime pose skeleton
-const MUTED_SKELETON_COLOR   = '#333333'   // line-2 — for non-selected subjects
+const MUTED_SKELETON_COLOR   = '#333333'   // line-2 — for filtered-out background people
 const JOINT_RADIUS = 2
 const VISIBILITY_THRESHOLD = 0.3
+
+// Distinct per-subject palette — lime stays the brand/primary slot, the rest
+// are chosen to read apart on black at a glance. Chips in PlayerPage use the
+// same colors so "which chip is which person" is answered visually.
+export const SUBJECT_PALETTE = [
+  '#ccff00',  // electric lime
+  '#00e5ff',  // cyan
+  '#ff6bd6',  // magenta
+  '#ffb000',  // amber
+  '#a78bfa',  // violet
+]
 
 /**
  * Build a time-indexed lookup from keypoint JSON for O(log n) frame lookup.
@@ -61,7 +72,7 @@ export function lookupFrame(timestamps, currentTime) {
 /**
  * Main draw function — called on every rAF tick.
  */
-export function drawFrame(canvas, frame, activeSubject, showLabels) {
+export function drawFrame(canvas, frame, activeSubject, showLabels, subjectColors = null, hoverSubject = null) {
   if (!canvas || !frame) return
 
   const ctx = canvas.getContext('2d')
@@ -77,8 +88,17 @@ export function drawFrame(canvas, frame, activeSubject, showLabels) {
 
   skeletons.forEach((skeleton) => {
     const isActive = skeleton.id === activeSubject
-    const color = isActive ? DEFAULT_SKELETON_COLOR : MUTED_SKELETON_COLOR
-    drawSkeleton(ctx, skeleton.keypoints, color, width, height, offsetX, offsetY)
+    const isHovered = hoverSubject != null && skeleton.id === hoverSubject
+    // Palette color when the subject is in the selector; filtered-out
+    // background people stay muted gray
+    const paletteColor = subjectColors?.[skeleton.id]
+    const color = paletteColor || (isActive ? DEFAULT_SKELETON_COLOR : MUTED_SKELETON_COLOR)
+    const emphasis = isHovered
+      ? { alpha: 1.0, lineWidth: 3.5, glow: true }
+      : isActive
+        ? { alpha: 0.9, lineWidth: 2.5, glow: false }
+        : { alpha: paletteColor ? 0.45 : 0.3, lineWidth: 2, glow: false }
+    drawSkeleton(ctx, skeleton.keypoints, color, width, height, offsetX, offsetY, emphasis)
   })
 
   if (showLabels && frame.strikes && frame.strikes.length > 0) {
@@ -91,12 +111,18 @@ export function drawFrame(canvas, frame, activeSubject, showLabels) {
   }
 }
 
-function drawSkeleton(ctx, keypoints, color, width, height, offsetX, offsetY) {
+function drawSkeleton(ctx, keypoints, color, width, height, offsetX, offsetY, emphasis = {}) {
   if (!keypoints || keypoints.length === 0) return
 
+  const { alpha = 0.8, lineWidth = 2, glow = false } = emphasis
+
   ctx.strokeStyle = color
-  ctx.lineWidth = 2
-  ctx.globalAlpha = 0.8
+  ctx.lineWidth = lineWidth
+  ctx.globalAlpha = alpha
+  if (glow) {
+    ctx.shadowColor = color
+    ctx.shadowBlur = 12
+  }
 
   SKELETON_CONNECTIONS.forEach(([i, j]) => {
     const a = keypoints[i]
@@ -111,7 +137,7 @@ function drawSkeleton(ctx, keypoints, color, width, height, offsetX, offsetY) {
   })
 
   ctx.fillStyle = color
-  ctx.globalAlpha = 1.0
+  ctx.globalAlpha = Math.min(alpha + 0.2, 1.0)
 
   keypoints.forEach((kp) => {
     if (!kp || kp.visibility < VISIBILITY_THRESHOLD) return
@@ -119,6 +145,9 @@ function drawSkeleton(ctx, keypoints, color, width, height, offsetX, offsetY) {
     ctx.arc(offsetX + kp.x * width, offsetY + kp.y * height, JOINT_RADIUS, 0, Math.PI * 2)
     ctx.fill()
   })
+
+  ctx.shadowBlur = 0
+  ctx.globalAlpha = 1.0
 }
 
 function drawStrikeLabel(ctx, strikeType, keypoints, width, height, offsetX, offsetY) {

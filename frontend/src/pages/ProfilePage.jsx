@@ -21,6 +21,7 @@ export default function ProfilePage() {
   const navigate = useNavigate()
   const { user, refetch } = useCurrentUser()
   const [experience, setExperience] = useState('intermediate')
+  const [consentBusy, setConsentBusy] = useState(false)
 
   useEffect(() => {
     if (user?.experience_level) setExperience(user.experience_level)
@@ -32,6 +33,20 @@ export default function ProfilePage() {
       await api.patch('/users/me', { experience_level: value })
       refetch()
     } catch {}
+  }
+
+  async function handleConsentToggle() {
+    const granting = !user?.biometric_consent_at
+    if (!granting && !window.confirm(
+      'Revoking deletes the identity data we\'ve stored for you (body proportions used to recognize you in your clips). You\'ll pick your fighter manually from now on. Continue?'
+    )) return
+    setConsentBusy(true)
+    try {
+      await api.post('/users/me/consent', { granted: granting })
+      refetch()
+    } catch {} finally {
+      setConsentBusy(false)
+    }
   }
 
   const tier = user?.subscription_tier || 'free'
@@ -73,6 +88,30 @@ export default function ProfilePage() {
             </div>
             <Button variant={tier === 'free' ? 'primary' : 'outline'} size="sm" onClick={() => navigate('/pricing')}>
               {tier === 'free' ? 'Upgrade' : 'Manage plan'}
+            </Button>
+          </div>
+        </section>
+
+        {/* ── Privacy ── */}
+        <section className="mb-10">
+          <h2 className="mb-1 font-display text-lg font-extrabold uppercase tracking-wide text-text">Privacy</h2>
+          <p className="mb-4 text-xs text-muted">Control how Southpaw uses your biometric (pose) data.</p>
+          <div className="flex items-center justify-between gap-4 rounded-2xl border border-line bg-surface p-5">
+            <div>
+              <p className="text-sm font-medium text-text">Recognize me in my own clips</p>
+              <p className="mt-0.5 max-w-md text-xs leading-relaxed text-muted">
+                Stores your body proportions so we can automatically pick you out when other
+                people are in frame. Never stored for anyone else in your videos; deleted
+                immediately if you turn this off.
+              </p>
+            </div>
+            <Button
+              variant={user?.biometric_consent_at ? 'outline' : 'primary'}
+              size="sm"
+              onClick={handleConsentToggle}
+              disabled={consentBusy || !user}
+            >
+              {consentBusy ? '...' : user?.biometric_consent_at ? 'Revoke' : 'Enable'}
             </Button>
           </div>
         </section>

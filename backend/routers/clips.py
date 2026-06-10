@@ -215,6 +215,68 @@ async def select_subject(
     return await _build_clip_response(clip, db)
 
 
+class StrikeLabelRequest(BaseModel):
+    strike_id: str | None = None      # null for 'missed' labels
+    label: str                        # correct | wrong_type | not_a_strike | missed
+    corrected_type: str | None = None
+    timestamp_seconds: float | None = None
+
+
+VALID_STRIKE_LABELS = {"correct", "wrong_type", "not_a_strike", "missed"}
+VALID_STRIKE_TYPES = {"jab", "cross", "hook", "rear_kick", "roundhouse_kick", "lead_kick", "kick"}
+
+
+@router.post("/{clip_id}/strike-labels", status_code=status.HTTP_201_CREATED)
+async def create_strike_label(
+    clip_id: uuid.UUID,
+    body: StrikeLabelRequest,
+    clerk_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record ground-truth feedback on a strike detection — training data for
+    the future ML classifier. 'missed' labels carry a timestamp instead of a
+    strike_id."""
+    from models.strike_label import StrikeLabel
+    from models.strike import Strike
+
+    clip = await _get_clip_for_user(clip_id, clerk_user_id, db)
+
+    if body.label not in VALID_STRIKE_LABELS:
+        raise HTTPException(status_code=422, detail=f"label must be one of {sorted(VALID_STRIKE_LABELS)}")
+    if body.label == "wrong_type" and body.corrected_type not in VALID_STRIKE_TYPES:
+        raise HTTPException(status_code=422, detail="wrong_type labels need a valid corrected_type")
+    if body.label == "missed":
+        if body.timestamp_seconds is None:
+            raise HTTPException(status_code=422, detail="missed labels need timestamp_seconds")
+    elif body.strike_id is None:
+        raise HTTPException(status_code=422, detail=f"{body.label} labels need a strike_id")
+
+    strike = None
+    if body.strike_id is not None:
+        strike = (await db.execute(
+            select(Strike).join(Job, Strike.job_id == Job.id).where(
+                Strike.id == uuid.UUID(body.strike_id), Job.clip_id == clip.id
+            )
+        )).scalar_one_or_none()
+        if strike is None:
+            raise HTTPException(status_code=404, detail="Strike not found on this clip")
+
+    user = (await db.execute(select(User).where(User.clerk_user_id == clerk_user_id))).scalar_one_or_none()
+    row = StrikeLabel(
+        clip_id=clip.id,
+        strike_id=strike.id if strike else None,
+        user_id=user.id if user else None,
+        label=body.label,
+        corrected_type=body.corrected_type,
+        timestamp_seconds=body.timestamp_seconds if body.timestamp_seconds is not None
+            else (strike.timestamp_seconds if strike else None),
+        source="athlete",
+    )
+    db.add(row)
+    await db.commit()
+    return {"id": str(row.id), "label": row.label}
+
+
 @router.delete("/{clip_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_clip(
     clip_id: uuid.UUID,
