@@ -3,7 +3,8 @@ import {
   buildIndex,
   lookupFrame,
   drawFrame,
-  findClosestSkeleton
+  findClosestSkeleton,
+  SUBJECT_PALETTE
 } from '../utils/skeletonRenderer'
 
 // Electric Kiwi strike data-viz ramp — punches glow lime/green, kicks burn orange
@@ -22,13 +23,22 @@ function filterStrikes(all, subject) {
   return all.filter(s => s.subject_id === subject)
 }
 
-function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick, selectedSubject = null, onSelectSubject, onSubjects }, ref) {
+// A subject earns a selector slot (and a skeleton color) with meaningful
+// presence: ≥20% of frames or at least one strike. Fragmented background
+// tracks stay muted gray on the canvas and out of the picker.
+function filterSubjects(subjects, totalFrames) {
+  return subjects.filter(s => (s.frames ?? 0) >= 0.2 * totalFrames || (s.strikes ?? 0) >= 1)
+}
+
+function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick, selectedSubject = null, onSelectSubject, onSubjects, onQuality, hoveredSubject = null }, ref) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const keypointsRef = useRef(null)      // full frames array
   const timestampIndexRef = useRef(null) // sorted timestamps for binary search
   const activeSubjectRef = useRef(selectedSubject ?? 0) // which skeleton id to track
   const allStrikesRef = useRef([])       // every subject's strikes (with subject_id)
+  const subjectColorsRef = useRef(null)  // {subject_id: palette color} for the rAF loop
+  const hoverSubjectRef = useRef(null)   // chip-hover highlight without re-render
   const rafRef = useRef(null)            // rAF handle for cleanup
   const showLabelsRef = useRef(true)     // whether to show strike labels
 
@@ -54,13 +64,23 @@ function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick, selecte
           .filter(f => f.strikes && f.strikes.length > 0)
           .flatMap(f => f.strikes)
 
-        // Report available subjects to the parent (for the selector)
-        if (onSubjects) {
-          const subjects = Array.isArray(data.subjects) && data.subjects.length
-            ? data.subjects
-            : [...new Set(data.frames.flatMap(f => (f.skeletons || []).map(s => s.id)))].map(id => ({ id }))
-          onSubjects(subjects)
-        }
+        // Report available subjects to the parent (for the selector):
+        // presence-filtered, color-assigned in presence order so the chip
+        // colors match the skeletons on the canvas.
+        const rawSubjects = Array.isArray(data.subjects) && data.subjects.length
+          ? data.subjects
+          : [...new Set(data.frames.flatMap(f => (f.skeletons || []).map(s => s.id)))].map(id => ({ id }))
+        const visible = filterSubjects(rawSubjects, data.frames.length)
+        const colored = (visible.length ? visible : rawSubjects).map((s, i) => ({
+          ...s,
+          color: SUBJECT_PALETTE[i % SUBJECT_PALETTE.length],
+        }))
+        subjectColorsRef.current = Object.fromEntries(colored.map(s => [s.id, s.color]))
+        if (onSubjects) onSubjects(colored)
+
+        // Surface footage-quality components (written by the pipeline) so the
+        // page can name the specific problem in its banner.
+        if (onQuality && data.pose_quality) onQuality(data.pose_quality)
 
         setStrikes(filterStrikes(allStrikesRef.current, selectedSubject))
         setLoading(false)
@@ -77,6 +97,11 @@ function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick, selecte
     activeSubjectRef.current = selectedSubject ?? 0
     if (!loading) setStrikes(filterStrikes(allStrikesRef.current, selectedSubject))
   }, [selectedSubject, loading])
+
+  // Chip-hover highlight — synced to a ref so the rAF loop picks it up
+  useEffect(() => {
+    hoverSubjectRef.current = hoveredSubject
+  }, [hoveredSubject])
 
   // Start rAF loop once keypoints are loaded and video is ready
   useEffect(() => {
@@ -128,7 +153,8 @@ function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick, selecte
         const idx = lookupFrame(timestampIndexRef.current, time)
         const frame = keypointsRef.current[idx]
         syncCanvasSize()
-        drawFrame(canvas, frame, activeSubjectRef.current, showLabelsRef.current)
+        drawFrame(canvas, frame, activeSubjectRef.current, showLabelsRef.current,
+                  subjectColorsRef.current, hoverSubjectRef.current)
       }
 
       rafRef.current = requestAnimationFrame(loop)
@@ -176,8 +202,11 @@ function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick, selecte
     }
   }
 
-  // Let the parent (PlayerPage) seek the video from the side panels
-  useImperativeHandle(ref, () => ({ seekTo }), [])
+  // Let the parent (PlayerPage) seek the video / read the playhead
+  useImperativeHandle(ref, () => ({
+    seekTo,
+    getCurrentTime: () => videoRef.current?.currentTime ?? 0,
+  }), [])
 
   const filteredStrikes = strikeFilter === 'all'
     ? strikes

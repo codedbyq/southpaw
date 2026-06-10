@@ -21,6 +21,7 @@ export default function OnboardingPage() {
   const api = useApi()
   const navigate = useNavigate()
   const [selected, setSelected] = useState(null)
+  const [consent, setConsent] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
 
@@ -30,6 +31,10 @@ export default function OnboardingPage() {
     setError(null)
     try {
       await api.patch('/users/me', { user_type: selected })
+      if (consent) {
+        // Optional — everything works without it, identity memory stays off
+        try { await api.post('/users/me/consent', { granted: true }) } catch {}
+      }
       navigate('/dashboard', { replace: true })
     } catch (err) {
       setError('Something went wrong. Please try again.')
@@ -66,6 +71,25 @@ export default function OnboardingPage() {
             </button>
           ))}
         </div>
+
+        {/* Biometric consent — optional, plain English */}
+        <label className="mb-8 flex cursor-pointer items-start gap-3 rounded-2xl border border-line bg-surface p-4 transition-colors hover:border-line2">
+          <input
+            type="checkbox"
+            checked={consent}
+            onChange={e => setConsent(e.target.checked)}
+            className="mt-0.5 rounded accent-kiwi"
+          />
+          <span className="text-xs leading-relaxed text-text3">
+            <span className="font-semibold text-text">Let Southpaw recognize me in my own clips.</span>{' '}
+            Our analysis maps your body's movement (pose keypoints), which counts as biometric
+            data. With your consent we also store your body proportions so we can automatically
+            pick you out when other people are in frame. We never store this for anyone else in
+            your videos, and it's deleted if you revoke consent (in Profile) or delete your
+            account. Leave this unchecked and everything still works — you'll just confirm
+            which fighter is you manually.
+          </span>
+        </label>
 
         {/* Error */}
         {error && (
