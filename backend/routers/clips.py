@@ -215,6 +215,40 @@ async def select_subject(
     return await _build_clip_response(clip, db)
 
 
+@router.post("/{clip_id}/retry", response_model=ClipResponse)
+async def retry_clip(
+    clip_id: uuid.UUID,
+    clerk_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-run processing for a failed clip. Safe to call repeatedly —
+    run_inference is idempotent (wipes its own strike rows at start)."""
+    clip = await _get_clip_for_user(clip_id, clerk_user_id, db)
+    job = (await db.execute(select(Job).where(Job.clip_id == clip.id))).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=400, detail="Clip has no processing job")
+    if job.status != "failed":
+        raise HTTPException(status_code=409, detail=f"Job is {job.status} — only failed jobs can be retried")
+
+    job.status = "queued"
+    job.progress = 0
+    job.error = None
+    job.error_code = None
+    await db.commit()
+
+    user = (await db.execute(select(User).where(User.clerk_user_id == clerk_user_id))).scalar_one_or_none()
+    tier = user.subscription_tier if user else "free"
+
+    from routers.uploads import get_inference_function
+    await get_inference_function().spawn.aio(
+        clip_id=str(clip.id),
+        job_id=str(job.id),
+        s3_key=clip.s3_key,
+        tier=tier,
+    )
+    return await _build_clip_response(clip, db)
+
+
 class StrikeLabelRequest(BaseModel):
     strike_id: str | None = None      # null for 'missed' labels
     label: str                        # correct | wrong_type | not_a_strike | missed

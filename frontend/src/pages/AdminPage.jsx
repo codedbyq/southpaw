@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApi } from '../api/client'
 import AppLayout from '../components/AppLayout'
@@ -14,6 +14,136 @@ const STATUS_TONES = {
   rejected: 'danger',
 }
 
+const JOB_STATUS_TABS = ['all', 'failed', 'processing', 'queued', 'complete']
+
+const JOB_STATUS_TONES = {
+  queued:     'muted',
+  processing: 'warning',
+  complete:   'success',
+  failed:     'danger',
+}
+
+function fmtDt(s) {
+  if (!s) return '—'
+  return new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+// Read-only ops view: recent processing jobs with pipeline diagnostics.
+// This is the first stop for "my video is stuck / the numbers look wrong".
+function JobsPanel() {
+  const api = useApi()
+  const navigate = useNavigate()
+  const [jobs, setJobs] = useState([])
+  const [statusTab, setStatusTab] = useState('all')
+  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState(null)
+
+  async function load(status) {
+    setLoading(true)
+    try {
+      const qs = status && status !== 'all' ? `?status_filter=${status}` : ''
+      setJobs(await api.get(`/admin/jobs${qs}`))
+    } catch (err) {
+      console.error('Failed to load jobs', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { load(statusTab) }, [statusTab])
+
+  return (
+    <>
+      <div className="mb-6 flex items-center gap-2">
+        {JOB_STATUS_TABS.map(t => (
+          <button key={t} onClick={() => setStatusTab(t)} className={`chip ${statusTab === t ? 'active' : ''}`}>{t}</button>
+        ))}
+        <button onClick={() => load(statusTab)} className="ml-auto text-xs text-muted hover:text-kiwi">↻ refresh</button>
+      </div>
+
+      {loading ? (
+        <p className="py-8 text-sm text-muted">Loading jobs…</p>
+      ) : jobs.length === 0 ? (
+        <p className="text-sm text-muted">No {statusTab === 'all' ? '' : statusTab + ' '}jobs.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-2xl border border-line">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-line bg-surface2 text-[10px] font-bold uppercase tracking-wider text-muted">
+                <th className="px-3 py-2.5">Created</th>
+                <th className="px-3 py-2.5">Clip</th>
+                <th className="px-3 py-2.5">Status</th>
+                <th className="px-3 py-2.5 text-right">Quality</th>
+                <th className="px-3 py-2.5 text-right">Subj conf</th>
+                <th className="px-3 py-2.5 text-right">Strikes</th>
+                <th className="px-3 py-2.5 text-right">Attempt</th>
+                <th className="px-3 py-2.5">Version</th>
+                <th className="px-3 py-2.5" />
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.map(j => (
+                <Fragment key={j.job_id}>
+                  <tr
+                    onClick={() => setExpanded(expanded === j.job_id ? null : j.job_id)}
+                    className="cursor-pointer border-b border-line last:border-0 hover:bg-surface2">
+                    <td className="whitespace-nowrap px-3 py-2.5 text-muted">{fmtDt(j.created_at)}</td>
+                    <td className="max-w-[180px] truncate px-3 py-2.5 text-text" title={`${j.filename} · ${j.clerk_user_id}`}>{j.filename}</td>
+                    <td className="px-3 py-2.5">
+                      <Tag tone={JOB_STATUS_TONES[j.status] || 'muted'}>{j.status}</Tag>
+                      {j.error_code && <span className="ml-1.5 text-danger">{j.error_code}</span>}
+                      {j.status === 'processing' && <span className="ml-1.5 tabular-nums text-muted">{j.progress}%</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">
+                      {j.pose_quality_score != null
+                        ? <span className={j.pose_quality_score >= 0.7 ? 'text-kiwi' : j.pose_quality_score >= 0.5 ? 'text-warning' : 'text-danger'}>{j.pose_quality_score.toFixed(2)}</span>
+                        : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-text3">{j.subject_confidence != null ? j.subject_confidence.toFixed(2) : '—'}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-text3">
+                      {j.strikes_persisted != null ? j.strikes_persisted : '—'}
+                      {j.strikes_low_confidence ? <span className="text-muted"> (+{j.strikes_low_confidence} low)</span> : null}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-text3">{j.attempt ?? '—'}</td>
+                    <td className="max-w-[140px] truncate px-3 py-2.5 text-muted" title={j.pipeline_version}>{j.pipeline_version || 'pre-v3'}</td>
+                    <td className="px-3 py-2.5">
+                      {j.status === 'complete' && (
+                        <button onClick={e => { e.stopPropagation(); navigate(`/clips/${j.clip_id}`) }}
+                          className="text-kiwi hover:underline">view</button>
+                      )}
+                    </td>
+                  </tr>
+                  {expanded === j.job_id && (
+                    <tr className="border-b border-line bg-surface2/50 last:border-0">
+                      <td colSpan={9} className="px-4 py-3 text-[11px] leading-relaxed text-text3">
+                        <div className="flex flex-wrap gap-x-6 gap-y-1">
+                          <span>user: <span className="text-text">{j.clerk_user_id}</span></span>
+                          <span>model: <span className="text-text">{j.model || '—'}</span></span>
+                          <span>fps: <span className="tabular-nums text-text">{j.fps ?? '—'}</span></span>
+                          <span>frames: <span className="tabular-nums text-text">{j.frames_processed ?? '—'}</span></span>
+                          <span>subjects: <span className="tabular-nums text-text">{j.subjects_detected ?? '—'}</span></span>
+                          <span>started: <span className="text-text">{fmtDt(j.started_at)}</span></span>
+                          <span>heartbeat: <span className="text-text">{fmtDt(j.heartbeat_at)}</span></span>
+                          {j.stage_timings && (
+                            <span>timings: <span className="tabular-nums text-text">
+                              {Object.entries(j.stage_timings).map(([k, v]) => `${k} ${v}s`).join(' · ')}
+                            </span></span>
+                          )}
+                        </div>
+                        {j.error && <p className="mt-1.5 text-danger">{j.error}</p>}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  )
+}
+
 export default function AdminPage() {
   const api = useApi()
   const navigate = useNavigate()
@@ -24,6 +154,7 @@ export default function AdminPage() {
   const [rejectModal, setRejectModal] = useState(null)
   const [rejectNotes, setRejectNotes] = useState('')
   const [forbidden, setForbidden] = useState(false)
+  const [section, setSection] = useState('coaches')   // 'coaches' | 'jobs'
 
   async function load(status) {
     setLoading(true)
@@ -123,12 +254,27 @@ export default function AdminPage() {
         </div>
       )}
 
-      <main className="max-w-4xl mx-auto px-8 py-10">
+      <main className="max-w-5xl mx-auto px-8 py-10">
         <div className="mb-8">
           <p className="font-display text-[13px] font-semibold uppercase tracking-[0.13em] text-muted">Admin</p>
-          <h1 className="mt-1 font-display text-[32px] font-extrabold leading-none text-text">Coach moderation</h1>
+          <h1 className="mt-1 font-display text-[32px] font-extrabold leading-none text-text">
+            {section === 'coaches' ? 'Coach moderation' : 'Processing jobs'}
+          </h1>
+          <div className="mt-4 flex gap-1 border-b border-line">
+            {[['coaches', 'Coaches'], ['jobs', 'Jobs']].map(([key, label]) => (
+              <button key={key} onClick={() => setSection(key)}
+                className={`border-b-2 px-4 py-2 font-display text-[13px] font-bold uppercase tracking-wide transition-colors ${
+                  section === key ? 'border-kiwi text-kiwi' : 'border-transparent text-muted hover:text-text'
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
+        {section === 'jobs' && <JobsPanel />}
+
+        {section === 'coaches' && (<>
         {/* Tabs */}
         <div className="flex gap-2 mb-8">
           {STATUS_TABS.map(t => (
@@ -214,6 +360,7 @@ export default function AdminPage() {
             ))}
           </div>
         )}
+        </>)}
       </main>
     </AppLayout>
   )

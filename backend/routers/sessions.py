@@ -136,13 +136,37 @@ async def get_trend_feedback(
     if len(sessions) < 2:
         raise HTTPException(status_code=400, detail="At least 2 sessions needed for trend analysis")
 
-    # Gather strikes per session
+    # Gather strikes per session.
+    # Trend data only comes from clips where we're confident the tracked
+    # subject is the athlete (D9): high subject_confidence, a user-confirmed
+    # identity sample, or legacy clips with no confidence value. A wrong
+    # auto-pick on one sparring clip would otherwise spike the athlete's
+    # progression with the opponent's strikes.
+    from models.identity_sample import IdentitySample
+    TREND_SUBJECT_CONFIDENCE_MIN = 0.7
+
     strikes_by_session: dict[str, list] = {}
     for session in sessions:
         clips_result = await db.execute(
             select(Clip).where(Clip.session_id == session.id)
         )
         clips = clips_result.scalars().all()
+        if not clips:
+            continue
+
+        confirmed_result = await db.execute(
+            select(IdentitySample.clip_id).where(
+                IdentitySample.clip_id.in_([c.id for c in clips]),
+                IdentitySample.revoked_at.is_(None),
+            )
+        )
+        confirmed_clip_ids = {r[0] for r in confirmed_result}
+        clips = [
+            c for c in clips
+            if c.subject_confidence is None                          # legacy / single-person
+            or c.subject_confidence >= TREND_SUBJECT_CONFIDENCE_MIN
+            or c.id in confirmed_clip_ids                            # user-confirmed
+        ]
         if not clips:
             continue
 

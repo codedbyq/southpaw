@@ -22,13 +22,36 @@ const STATUS_LABELS = {
   pending:    'Pending',
 }
 
-export default function ClipCard({ clip, onDelete, selectable = false, selected = false, onToggle }) {
+// Friendly messages for pipeline error codes (jobs.error_code)
+const ERROR_MESSAGES = {
+  timeout:      'Processing timed out — retry, or try a shorter clip.',
+  decode_error: "This video couldn't be read — try re-exporting it from your phone.",
+  no_person:    'No people were detected — check framing and lighting.',
+  s3_error:     "We couldn't fetch the upload — retry in a moment.",
+  internal:     'Something went wrong on our side — retry usually fixes it.',
+}
+
+export default function ClipCard({ clip, onDelete, onRetry, selectable = false, selected = false, onToggle }) {
   const api = useApi()
   const navigate = useNavigate()
   const [deleting, setDeleting] = useState(false)
+  const [retrying, setRetrying] = useState(false)
 
   const jobStatus = clip.job?.status || clip.status
   const isReady = clip.job?.status === 'complete'
+  const isFailed = jobStatus === 'failed'
+
+  async function handleRetry() {
+    setRetrying(true)
+    try {
+      await api.post(`/clips/${clip.id}/retry`)
+      onRetry?.()
+    } catch (err) {
+      console.error('Retry failed', err)
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   async function handleDelete() {
     if (!confirm(`Delete "${clip.filename}"?`)) return
@@ -86,6 +109,11 @@ export default function ClipCard({ clip, onDelete, selectable = false, selected 
               month: 'short', day: 'numeric', year: 'numeric'
             })}
           </p>
+          {isFailed && (
+            <p className="mt-1 max-w-xs text-xs leading-snug text-danger">
+              {ERROR_MESSAGES[clip.job?.error_code] || clip.job?.error || 'Processing failed.'}
+            </p>
+          )}
         </div>
       </div>
 
@@ -98,6 +126,13 @@ export default function ClipCard({ clip, onDelete, selectable = false, selected 
         {/* View button — only when processing is complete */}
         {isReady && (
           <Button size="sm" onClick={() => navigate(`/clips/${clip.id}`)}>View</Button>
+        )}
+
+        {/* Retry — failed jobs are safe to respawn (idempotent pipeline) */}
+        {isFailed && (
+          <Button size="sm" onClick={handleRetry} disabled={retrying}>
+            {retrying ? 'Retrying...' : 'Retry'}
+          </Button>
         )}
 
         {/* Delete button — hidden in select mode */}

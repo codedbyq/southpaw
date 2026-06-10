@@ -36,8 +36,11 @@ image = (
 )
 
 # Model per subscription tier (YOLO11 — fewer params, better pose accuracy than v8)
+# BETA: small is the floor for everyone — nano's keypoint jitter undermines the
+# velocity-based classifier, and data quality is the product thesis. Restore
+# free→nano at public launch when GPU cost matters at scale.
 TIER_MODELS = {
-    "free":  "yolo11n-pose.pt",
+    "free":  "yolo11s-pose.pt",
     "pro":   "yolo11s-pose.pt",
     "elite": "yolo11m-pose.pt",
 }
@@ -124,7 +127,7 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
     from models.strike import Strike
     from models.user import User
 
-    model_name = TIER_MODELS.get(tier, "yolo11n-pose.pt")
+    model_name = TIER_MODELS.get(tier, "yolo11s-pose.pt")
     model = YOLO(model_name)
 
     # Confirm GPU is actually in use (vs a CPU-only torch build)
