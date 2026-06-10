@@ -171,3 +171,58 @@ def _build_view(profile: CoachProfile) -> CoachProfileAdminView:
         review_count=profile.review_count,
         created_at=profile.created_at,
     )
+
+
+# --- Processing jobs debug view ---
+
+@router.get("/jobs")
+async def list_jobs(
+    status_filter: str | None = None,    # queued | processing | complete | failed
+    limit: int = 50,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recent processing jobs with diagnostics — the ops view for "my video is
+    stuck/wrong" reports. Read-only; one query, newest first."""
+    from models.job import Job
+    from models.clip import Clip
+
+    query = (
+        select(Job, Clip)
+        .join(Clip, Job.clip_id == Clip.id)
+        .order_by(Job.created_at.desc().nullslast())
+        .limit(min(limit, 200))
+    )
+    if status_filter:
+        query = query.where(Job.status == status_filter)
+
+    rows = (await db.execute(query)).all()
+    out = []
+    for job, clip in rows:
+        diag = job.diagnostics or {}
+        out.append({
+            "job_id": str(job.id),
+            "clip_id": str(clip.id),
+            "filename": clip.filename,
+            "clerk_user_id": clip.clerk_user_id,
+            "status": job.status,
+            "progress": job.progress,
+            "error": job.error,
+            "error_code": job.error_code,
+            "attempt": job.attempt,
+            "created_at": job.created_at,
+            "started_at": job.started_at,
+            "completed_at": job.completed_at,
+            "heartbeat_at": job.heartbeat_at,
+            "pipeline_version": clip.pipeline_version,
+            "pose_quality_score": clip.pose_quality_score,
+            "subject_confidence": clip.subject_confidence,
+            "model": diag.get("model"),
+            "fps": diag.get("fps"),
+            "frames_processed": diag.get("frames_processed"),
+            "subjects_detected": diag.get("subjects_detected"),
+            "strikes_persisted": diag.get("strikes_persisted"),
+            "strikes_low_confidence": diag.get("strikes_low_confidence"),
+            "stage_timings": diag.get("stage_timings"),
+        })
+    return out

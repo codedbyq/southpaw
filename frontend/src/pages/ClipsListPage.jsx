@@ -185,6 +185,7 @@ export default function ClipsListPage() {
                   key={clip.id}
                   clip={clip}
                   onDelete={load}
+                  onRetry={load}
                   selectable={filtered.length > 1}
                   selected={selectedClipIds.has(clip.id)}
                   onToggle={toggleClipSelect}
