@@ -204,9 +204,12 @@ async def complete_media_upload(
         profile.avatar_s3_key = body.s3_key
     else:
         profile.intro_video_s3_key = body.s3_key
-        # Queue thumbnail extraction on Modal
+        # Queue thumbnail extraction on Modal (same env routing as inference)
         import modal
-        extract_thumb = modal.Function.from_name("southpaw-inference", "extract_coach_thumbnail")
+        extract_thumb = modal.Function.from_name(
+            "southpaw-inference", "extract_coach_thumbnail",
+            environment_name=settings.MODAL_ENVIRONMENT or None,
+        )
         await extract_thumb.spawn.aio(str(profile.id), body.s3_key)
 
     await db.commit()

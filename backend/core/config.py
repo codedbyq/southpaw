@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # LLM
     DEEPSEEK_API_KEY: str = ""
 
+    # Modal — which deployed environment to call for inference.
+    # Empty = Modal's default environment (prod). Set to "dev" locally.
+    MODAL_ENVIRONMENT: str = ""
+
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""

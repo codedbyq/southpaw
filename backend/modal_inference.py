@@ -27,6 +27,7 @@ image = (
         "redis",
         "pydantic-settings",
         "openai",
+        "supervision<0.30",     # ByteTrack multi-person tracking (sv.ByteTrack removed in 0.30)
     ])
     .add_local_python_source("models")
     .add_local_python_source("db")
@@ -34,11 +35,11 @@ image = (
     .add_local_python_source("services")
 )
 
-# Model per subscription tier
+# Model per subscription tier (YOLO11 — fewer params, better pose accuracy than v8)
 TIER_MODELS = {
-    "free":  "yolov8n-pose.pt",
-    "pro":   "yolov8s-pose.pt",
-    "elite": "yolov8m-pose.pt",
+    "free":  "yolo11n-pose.pt",
+    "pro":   "yolo11s-pose.pt",
+    "elite": "yolo11m-pose.pt",
 }
 
 # LLM model per subscription tier for clip-level coaching feedback
@@ -48,10 +49,22 @@ TIER_LLM_MODELS = {
     "elite": "deepseek-reasoner",
 }
 
-STRIKE_VELOCITY_THRESHOLD = 0.08
-STRIKE_COOLDOWN_FRAMES = 15
-VELOCITY_WINDOW = 5
-MIN_KEYPOINT_CONF = 0.3
+# Strike classification lives in services/strike_classifier.py (pure Python,
+# time-based + torso-normalized) and runs as a post-pass over the tracked
+# keypoints — the same code path the golden-set harness replays offline.
+
+TARGET_SHORT_SIDE = 720   # downscale before inference; pose accuracy holds
+MAX_EFFECTIVE_FPS = 45    # above this (60fps phones), process every 2nd frame
+
+STALE_HEARTBEAT_MINUTES = 10   # reaper: processing job with no heartbeat
+STALE_QUEUED_MINUTES = 15      # reaper: spawned but never started
+
+
+class PipelineError(Exception):
+    """Failure with a machine-readable code + user-readable message."""
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 # --- Main inference function ---
@@ -59,22 +72,28 @@ MIN_KEYPOINT_CONF = 0.3
 @app.function(
     image=image,
     secrets=[modal.Secret.from_name("southpaw-secrets")],
+    gpu="T4",          # NVIDIA T4 — cheapest GPU; ~8-10x faster than CPU for pose
     memory=4096,
-    timeout=600,
+    timeout=1800,      # 30 min safety net (cold start + long clip); bills actual runtime
     retries=2,
 )
 def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
     """
-    Runs YOLOv8 pose estimation on a clip.
+    Runs YOLO11 pose estimation on a clip with ByteTrack multi-person tracking.
     Called via run_inference.spawn() from FastAPI — fire and forget.
     Publishes SSE progress events to Upstash Redis pub/sub.
     """
+    import time
+    from datetime import datetime, timezone
+
     import boto3
     import redis as redis_lib
-    from sqlalchemy import create_engine, select
+    from sqlalchemy import create_engine, select, delete
     from sqlalchemy.orm import sessionmaker
     from ultralytics import YOLO
     import cv2
+    import numpy as np
+    import supervision as sv
 
     # --- Clients ---
     s3 = boto3.client(
@@ -89,8 +108,10 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
         ssl_cert_reqs=None,
     )
 
+    # This function uses a SYNC engine (psycopg2) — tolerate an async URL in
+    # the secret by stripping the +asyncpg driver suffix.
     engine = create_engine(
-        os.environ["DATABASE_URL"],
+        os.environ["DATABASE_URL"].replace("+asyncpg", ""),
         pool_pre_ping=True,
         connect_args={"sslmode": "require"},
     )
@@ -103,8 +124,12 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
     from models.strike import Strike
     from models.user import User
 
-    model_name = TIER_MODELS.get(tier, "yolov8n-pose.pt")
+    model_name = TIER_MODELS.get(tier, "yolo11n-pose.pt")
     model = YOLO(model_name)
+
+    # Confirm GPU is actually in use (vs a CPU-only torch build)
+    import torch
+    logger.info(f"Inference device: {'cuda' if torch.cuda.is_available() else 'cpu'} · model={model_name} · tier={tier}")
 
     def publish(status: str, progress: int, result_url: str = None):
         payload = {"status": status, "progress": progress}
@@ -119,18 +144,35 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
         clip = db.execute(select(Clip).where(Clip.id == clip_id)).scalar_one()
 
         try:
-            # Mark processing
+            stage_timings = {}
+            stage_start = time.monotonic()
+
+            # Mark processing. Modal retries this function (retries=2), so the
+            # run must be idempotent: wipe any strikes a previous partial
+            # attempt committed before doing anything else.
+            from models.strike import Strike as StrikeModel
+            db.execute(delete(StrikeModel).where(StrikeModel.job_id == job.id))
             job.status = "processing"
             job.progress = 0
+            job.error = None
+            job.error_code = None
+            job.attempt = (job.attempt or 0) + 1
+            job.started_at = datetime.now(timezone.utc)
+            job.heartbeat_at = datetime.now(timezone.utc)
             db.commit()
             publish("processing", 0)
 
             # Download clip from S3
             suffix = os.path.splitext(s3_key)[-1] or ".mp4"
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-            s3.download_fileobj(os.environ["S3_BUCKET_NAME"], s3_key, tmp)
+            try:
+                s3.download_fileobj(os.environ["S3_BUCKET_NAME"], s3_key, tmp)
+            except Exception as e:
+                raise PipelineError("s3_error", "Could not fetch the uploaded video") from e
             tmp.close()
             tmp_path = tmp.name
+            stage_timings["download"] = round(time.monotonic() - stage_start, 2)
+            stage_start = time.monotonic()
 
             # Detect EXIF rotation
             rotation = _get_video_rotation(tmp_path)
@@ -139,80 +181,109 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
             cap = cv2.VideoCapture(tmp_path)
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             fps = cap.get(cv2.CAP_PROP_FPS) or 30
+            if not cap.isOpened() or total_frames <= 0:
+                raise PipelineError("decode_error", "Video could not be read — try re-exporting it")
+
+            # 60fps phone video → process every 2nd frame. The classifier is
+            # time-based, so results match 30fps; this halves GPU time.
+            stride = 2 if fps > MAX_EFFECTIVE_FPS else 1
+            effective_fps = fps / stride
+
+            # ByteTrack — persistent subject IDs across frames (Kalman + Hungarian).
+            # lost_track_buffer keeps a briefly-occluded fighter for ~1s.
+            tracker = sv.ByteTrack(
+                track_activation_threshold=0.25,
+                lost_track_buffer=int(round(effective_fps)),
+                minimum_matching_threshold=0.8,
+                frame_rate=int(round(effective_fps)),
+            )
 
             frames_data = []
-            strikes_data = []
-            keypoint_history = {}
-            last_strike_frame = {}
+            luma_samples = []
             frame_index = 0
+            processed = 0
 
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
                     break
+                if stride > 1 and frame_index % stride:
+                    frame_index += 1
+                    continue
 
                 if rotation:
                     frame = _apply_rotation(frame, rotation)
 
-                results = model(frame, verbose=False)
-
-                timestamp = frame_index / fps
-                frame_strikes = []
-                skeletons = []
-
-                for subject_idx, result in enumerate(results):
-                    if result.keypoints is None:
-                        continue
-
-                    kps = result.keypoints.xy[0].cpu().numpy()
-                    conf = result.keypoints.conf[0].cpu().numpy()
+                # Downscale to ~720p short side before inference — pose accuracy
+                # holds and 4K phone video gets a 2-4x speedup.
+                h, w = frame.shape[:2]
+                if min(h, w) > TARGET_SHORT_SIDE:
+                    scale = TARGET_SHORT_SIDE / min(h, w)
+                    frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
                     h, w = frame.shape[:2]
 
-                    keypoints = [
-                        {
-                            "x": float(kps[i][0] / w),
-                            "y": float(kps[i][1] / h),
-                            "visibility": float(conf[i]),
-                        }
-                        for i in range(len(kps))
-                    ]
-                    skeletons.append({"id": subject_idx, "keypoints": keypoints})
+                if processed % 30 == 0:
+                    luma_samples.append(float(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean()))
 
-                    if subject_idx not in keypoint_history:
-                        keypoint_history[subject_idx] = []
-                    keypoint_history[subject_idx].append(keypoints)
-                    if len(keypoint_history[subject_idx]) > VELOCITY_WINDOW:
-                        keypoint_history[subject_idx].pop(0)
+                results = model(frame, verbose=False)
+                result = results[0]
 
-                    if len(keypoint_history[subject_idx]) >= VELOCITY_WINDOW:
-                        strike = _classify_strike(
-                            keypoint_history[subject_idx],
-                            frame_index,
-                            last_strike_frame.get(subject_idx, -STRIKE_COOLDOWN_FRAMES),
+                timestamp = frame_index / fps
+                skeletons = []
+
+                if result.keypoints is not None and len(result.keypoints) > 0:
+                    # Normalize YOLO output → Supervision Detections, then track.
+                    detections = sv.Detections.from_ultralytics(result)
+                    # Tag each detection with its row index into result.keypoints so we
+                    # can map a tracked detection back to the right keypoints even if
+                    # ByteTrack reorders or drops detections.
+                    detections.data["kp_index"] = np.arange(len(detections))
+                    detections = tracker.update_with_detections(detections)
+
+                    for det_idx in range(len(detections)):
+                        # Persistent subject identity across frames
+                        tracker_id = (
+                            int(detections.tracker_id[det_idx])
+                            if detections.tracker_id is not None else det_idx
                         )
-                        if strike:
-                            strike["timestamp_seconds"] = timestamp
-                            strike["frame_index"] = frame_index
-                            frame_strikes.append(strike)
-                            strikes_data.append(strike)
-                            last_strike_frame[subject_idx] = frame_index
+                        kp_index = int(detections.data["kp_index"][det_idx])
+
+                        kps = result.keypoints.xy[kp_index].cpu().numpy()
+                        conf = result.keypoints.conf[kp_index].cpu().numpy()
+
+                        keypoints = [
+                            {
+                                "x": float(kps[i][0] / w),
+                                "y": float(kps[i][1] / h),
+                                "visibility": float(conf[i]),
+                            }
+                            for i in range(len(kps))
+                        ]
+                        skeletons.append({"id": tracker_id, "keypoints": keypoints})
 
                 frames_data.append({
                     "frame": frame_index,
                     "timestamp": round(timestamp, 4),
                     "skeletons": skeletons,
-                    "strikes": frame_strikes,
+                    "strikes": [],   # filled by the classification post-pass
                 })
 
-                if frame_index % 30 == 0 and total_frames > 0:
-                    progress = min(int((frame_index / total_frames) * 95), 95)
+                if processed % 30 == 0 and total_frames > 0:
+                    progress = min(int((frame_index / total_frames) * 90), 90)
                     job.progress = progress
+                    job.heartbeat_at = datetime.now(timezone.utc)
                     db.commit()
                     publish("processing", progress)
 
                 frame_index += 1
+                processed += 1
 
             cap.release()
+            stage_timings["inference"] = round(time.monotonic() - stage_start, 2)
+            stage_start = time.monotonic()
+
+            if not any(f["skeletons"] for f in frames_data):
+                raise PipelineError("no_person", "No people were detected in this video — check framing and lighting")
 
             # Thumbnail extraction (non-fatal)
             try:
@@ -225,14 +296,65 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
             except Exception as thumb_err:
                 logger.warning(f"Thumbnail generation failed (non-fatal): {thumb_err}")
 
-            # Head movement score + stance detection
-            head_score = _compute_head_movement(frames_data)
+            from services.clip_metrics import (
+                compute_head_movement, detect_stance, apply_recovery_seconds,
+                subject_summaries, score_subjects, skeletal_stats, compute_pose_quality,
+            )
+            from services.strike_classifier import (
+                classify_clip, RULES_VERSION, MIN_PERSISTED_CONFIDENCE,
+            )
+
+            pipeline_version = f"v3:{model_name}:{RULES_VERSION}"
+
+            # Classification post-pass: per-subject stance first (jab/cross
+            # naming is stance-dependent), then time-based, torso-normalized
+            # strike rules over the tracked keypoints.
+            subject_ids = {sk["id"] for f in frames_data for sk in f["skeletons"]}
+            stances = {sid: detect_stance(frames_data, sid) for sid in subject_ids}
+            strikes_data = classify_clip(
+                frames_data, stances, clip_type=getattr(clip, "clip_type", None)
+            )
+
+            # Primary subject: composite of presence, size, center bias, and
+            # strike activity — not just whoever is closest to the camera.
+            # The user can still override in the player.
+            strike_counts = {}
+            for strike in strikes_data:
+                if not strike.get("low_confidence"):
+                    strike_counts[strike["subject_id"]] = strike_counts.get(strike["subject_id"], 0) + 1
+            primary_subject, subject_confidence, _ = score_subjects(frames_data, strike_counts)
+
+            # recovery_seconds = gap to *this subject's* next strike (not the
+            # opponent's). Compute per-subject in place — JSON shares these dicts.
+            by_subject = {}
+            for strike in strikes_data:
+                by_subject.setdefault(strike.get("subject_id"), []).append(strike)
+            for group in by_subject.values():
+                group.sort(key=lambda s: s["timestamp_seconds"])
+                apply_recovery_seconds(group)
+
+            # Footage quality — drives the UI banner and LLM confidence gating
+            mean_luma = sum(luma_samples) / len(luma_samples) if luma_samples else None
+            pose_quality_score, quality_components = compute_pose_quality(
+                frames_data, primary_subject,
+                mean_luma=mean_luma, subject_confidence=subject_confidence,
+            )
+
+            # Head movement + stance for the primary subject
+            head_score = compute_head_movement(frames_data, primary_subject)
             if head_score is not None:
                 clip.head_movement_score = head_score
-            clip.stance = _detect_stance(frames_data)
+            clip.stance = stances.get(primary_subject, "unknown")
+            clip.selected_subject_id = primary_subject
+            clip.subject_confidence = subject_confidence
+            clip.pose_quality_score = pose_quality_score
+            clip.pipeline_version = pipeline_version
             db.commit()
+            stage_timings["classify"] = round(time.monotonic() - stage_start, 2)
+            stage_start = time.monotonic()
 
-            # Write keypoint JSON to S3
+            # Write keypoint JSON to S3 (all subjects, tagged with subject_id;
+            # strikes carry confidence + a debug trace of their trigger values)
             result_s3_key = f"processed/{clip.clerk_user_id}/{clip_id}/keypoints.json"
             s3.put_object(
                 Bucket=os.environ["S3_BUCKET_NAME"],
@@ -240,29 +362,34 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
                 Body=json.dumps({
                     "clip_id": clip_id,
                     "total_frames": frame_index,
+                    "pipeline_version": pipeline_version,
+                    "fps": fps,
+                    "stride": stride,
+                    "primary_subject_id": primary_subject,
+                    "subject_confidence": subject_confidence,
+                    "pose_quality": {"score": pose_quality_score, **quality_components},
+                    "subjects": subject_summaries(frames_data),
                     "frames": frames_data,
                 }),
                 ContentType="application/json",
             )
+            stage_timings["s3_write"] = round(time.monotonic() - stage_start, 2)
+            stage_start = time.monotonic()
 
-            # Compute recovery_seconds (time from each strike to the next)
-            for i, strike in enumerate(strikes_data):
-                if i + 1 < len(strikes_data):
-                    strike["recovery_seconds"] = round(
-                        strikes_data[i + 1]["timestamp_seconds"] - strike["timestamp_seconds"], 3
-                    )
-                else:
-                    strike["recovery_seconds"] = None
-
-            # Write strikes to Postgres with full metrics
+            # Persist ONLY the primary subject's confident strikes to Postgres —
+            # all downstream metrics/feedback are computed for the selected
+            # subject. Low-confidence strikes stay in the JSON, out of metrics.
             strike_rows = []
             for strike in strikes_data:
+                if strike.get("subject_id") != primary_subject or strike.get("low_confidence"):
+                    continue
                 row = Strike(
                     job_id=job.id,
                     type=strike["type"],
                     timestamp_seconds=strike["timestamp_seconds"],
                     frame_index=strike["frame_index"],
-                    confidence=None,
+                    subject_id=strike.get("subject_id"),
+                    confidence=strike.get("confidence"),
                     arm_extension=strike.get("arm_extension"),
                     guard_dropped=strike.get("guard_dropped"),
                     peak_velocity=strike.get("peak_velocity"),
@@ -273,10 +400,63 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
                 strike_rows.append(row)
             db.commit()
 
+            # Solo clip (shadow/bag/drills) = free high-confidence identity
+            # sample for ReID later. Gated on biometric consent (BIPA et al.) —
+            # no consent, no identity data.
+            try:
+                user_row = db.execute(
+                    select(User).where(User.clerk_user_id == clip.clerk_user_id)
+                ).scalar_one_or_none()
+                meaningful = [
+                    s for s in subject_summaries(frames_data)
+                    if s["frames"] >= 0.3 * max(len(frames_data), 1)
+                ]
+                if (
+                    user_row is not None
+                    and getattr(user_row, "biometric_consent_at", None)
+                    and len(meaningful) == 1
+                    and meaningful[0]["id"] == primary_subject
+                ):
+                    from models.identity_sample import IdentitySample
+                    db.execute(delete(IdentitySample).where(IdentitySample.clip_id == clip.id))
+                    db.add(IdentitySample(
+                        user_id=user_row.id,
+                        clip_id=clip.id,
+                        subject_id=primary_subject,
+                        pipeline_version=pipeline_version,
+                        source="solo",
+                        skeletal_stats=skeletal_stats(frames_data, primary_subject),
+                        confidence=subject_confidence,
+                    ))
+                    db.commit()
+            except Exception as id_err:
+                logger.warning(f"Identity sample capture failed (non-fatal): {id_err}")
+                db.rollback()
+
             # Mark complete — user can view clip immediately
             job.status = "complete"
             job.progress = 100
             job.result_s3_key = result_s3_key
+            job.completed_at = datetime.now(timezone.utc)
+            job.heartbeat_at = datetime.now(timezone.utc)
+            job.diagnostics = {
+                "pipeline_version": pipeline_version,
+                "model": model_name,
+                "tier": tier,
+                "fps": round(fps, 2),
+                "stride": stride,
+                "frames_total": total_frames,
+                "frames_processed": processed,
+                "subjects_detected": len(subject_ids),
+                "primary_subject": primary_subject,
+                "subject_confidence": subject_confidence,
+                "strikes_total": len(strikes_data),
+                "strikes_persisted": len(strike_rows),
+                "strikes_low_confidence": sum(1 for s in strikes_data if s.get("low_confidence")),
+                "pose_quality": {"score": pose_quality_score, **quality_components},
+                "stage_timings": stage_timings,
+                "attempt": job.attempt,
+            }
             db.commit()
 
             publish("complete", 100, result_url=result_s3_key)
@@ -309,10 +489,23 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
 
         except Exception as e:
             logger.error(f"Inference failed for job {job_id}: {e}")
-            job.status = "failed"
-            job.error = str(e)
+            db.rollback()
+            # If the clip/job was deleted mid-run (user deleted the clip — which
+            # cascades to its job), there's nothing to update. Exit quietly so
+            # Modal doesn't pointlessly retry a clip that no longer exists.
+            fresh_job = db.execute(select(Job).where(Job.id == job_id)).scalar_one_or_none()
+            if fresh_job is None:
+                logger.warning(f"Job {job_id} no longer exists (clip deleted mid-process); aborting.")
+                return
+            fresh_job.status = "failed"
+            fresh_job.error = str(e)
+            fresh_job.error_code = e.code if isinstance(e, PipelineError) else "internal"
             db.commit()
             publish("failed", 0)
+            # Deterministic input failures won't succeed on retry — exit
+            # cleanly so Modal doesn't burn two more GPU runs on them.
+            if isinstance(e, PipelineError) and e.code in ("decode_error", "no_person"):
+                return
             raise
 
         finally:
@@ -352,103 +545,6 @@ def _apply_rotation(frame, rotation: int):
     return frame
 
 
-def _distance(kps, a, b) -> float:
-    dx = kps[a]["x"] - kps[b]["x"]
-    dy = kps[a]["y"] - kps[b]["y"]
-    return round((dx**2 + dy**2) ** 0.5, 4)
-
-
-def _classify_strike(history, current_frame, last_strike_frame):
-    if current_frame - last_strike_frame < STRIKE_COOLDOWN_FRAMES:
-        return None
-
-    current = history[-1]
-    past = history[0]
-
-    def velocity(idx):
-        dx = current[idx]["x"] - past[idx]["x"]
-        dy = current[idx]["y"] - past[idx]["y"]
-        return (dx**2 + dy**2) ** 0.5, dx, dy
-
-    lw_vel, lw_dx, lw_dy = velocity(9)
-    rw_vel, rw_dx, rw_dy = velocity(10)
-    la_vel, la_dx, la_dy = velocity(15)
-    ra_vel, ra_dx, ra_dy = velocity(16)
-
-    left_hook_shape  = abs(current[9]["x"]  - current[7]["x"]) < 0.1
-    right_hook_shape = abs(current[10]["x"] - current[8]["x"]) < 0.1
-
-    strike_type = None
-    striking_side = None
-    peak_vel = 0.0
-
-    if rw_vel > STRIKE_VELOCITY_THRESHOLD and abs(rw_dx) > abs(rw_dy):
-        strike_type = "hook" if right_hook_shape else "jab"
-        striking_side = "right"
-        peak_vel = rw_vel
-    elif lw_vel > STRIKE_VELOCITY_THRESHOLD and abs(lw_dx) > abs(lw_dy):
-        strike_type = "hook" if left_hook_shape else "cross"
-        striking_side = "left"
-        peak_vel = lw_vel
-    elif ra_vel > STRIKE_VELOCITY_THRESHOLD and ra_dy < -0.01:
-        strike_type = "roundhouse_kick"
-        striking_side = "kick"
-        peak_vel = ra_vel
-    elif la_vel > STRIKE_VELOCITY_THRESHOLD and la_dy < -0.01:
-        strike_type = "rear_kick"
-        striking_side = "kick"
-        peak_vel = la_vel
-
-    if strike_type is None:
-        return None
-
-    # arm_extension: shoulder-to-wrist distance at peak velocity
-    arm_extension = None
-    if striking_side == "right":
-        if current[6]["visibility"] > MIN_KEYPOINT_CONF and current[10]["visibility"] > MIN_KEYPOINT_CONF:
-            arm_extension = _distance(current, 6, 10)
-    elif striking_side == "left":
-        if current[5]["visibility"] > MIN_KEYPOINT_CONF and current[9]["visibility"] > MIN_KEYPOINT_CONF:
-            arm_extension = _distance(current, 5, 9)
-
-    # guard_dropped: non-striking hand below nose
-    guard_dropped = None
-    nose_y = current[0]["y"]
-    if current[0]["visibility"] > MIN_KEYPOINT_CONF:
-        if striking_side == "right" and current[9]["visibility"] > MIN_KEYPOINT_CONF:
-            guard_dropped = bool(current[9]["y"] > nose_y)
-        elif striking_side == "left" and current[10]["visibility"] > MIN_KEYPOINT_CONF:
-            guard_dropped = bool(current[10]["y"] > nose_y)
-        elif striking_side == "kick":
-            if current[9]["visibility"] > MIN_KEYPOINT_CONF and current[10]["visibility"] > MIN_KEYPOINT_CONF:
-                guard_dropped = bool(current[9]["y"] > nose_y or current[10]["y"] > nose_y)
-
-    # hip_rotation: torso rotation from start to peak of strike
-    hip_rotation = None
-    hip_kps = [5, 6, 11, 12]
-    if all(current[k]["visibility"] > MIN_KEYPOINT_CONF for k in hip_kps) and \
-       all(past[k]["visibility"] > MIN_KEYPOINT_CONF for k in hip_kps):
-        import math
-        def _angle(kps, a, b):
-            dx = kps[b]["x"] - kps[a]["x"]
-            dy = kps[b]["y"] - kps[a]["y"]
-            return math.degrees(math.atan2(dy, dx))
-        shoulder_angle_start = _angle(past, 5, 6)
-        shoulder_angle_end   = _angle(current, 5, 6)
-        hip_angle_start      = _angle(past, 11, 12)
-        hip_angle_end        = _angle(current, 11, 12)
-        hip_rotation = round(abs((shoulder_angle_end - shoulder_angle_start) -
-                                  (hip_angle_end - hip_angle_start)), 2)
-
-    return {
-        "type": strike_type,
-        "arm_extension": arm_extension,
-        "guard_dropped": guard_dropped,
-        "peak_velocity": round(peak_vel, 4),
-        "hip_rotation": hip_rotation,
-    }
-
-
 def _extract_and_upload_thumbnail(video_path, clip_id, clerk_user_id, s3_client):
     import cv2
     cap = cv2.VideoCapture(video_path)
@@ -480,49 +576,8 @@ def _extract_and_upload_thumbnail(video_path, clip_id, clerk_user_id, s3_client)
     return key
 
 
-def _compute_head_movement(frames_data) -> float | None:
-    nose_xs = []
-    nose_ys = []
-    for frame in frames_data:
-        for skeleton in frame.get("skeletons", []):
-            kps = skeleton.get("keypoints", [])
-            if kps and kps[0]["visibility"] > MIN_KEYPOINT_CONF:
-                nose_xs.append(kps[0]["x"])
-                nose_ys.append(kps[0]["y"])
-                break
-    if len(nose_xs) < 30:
-        return None
-    def _std(values):
-        mean = sum(values) / len(values)
-        return (sum((v - mean) ** 2 for v in values) / len(values)) ** 0.5
-    raw_score = (_std(nose_xs) + _std(nose_ys)) / 2
-    return min(round(raw_score / 0.15, 3), 1.0)
-
-
-def _detect_stance(frames_data) -> str | None:
-    left_forward = 0
-    right_forward = 0
-    for frame in frames_data:
-        for skeleton in frame.get("skeletons", []):
-            kps = skeleton.get("keypoints", [])
-            if len(kps) < 17:
-                continue
-            la, ra = kps[15], kps[16]
-            if la["visibility"] > MIN_KEYPOINT_CONF and ra["visibility"] > MIN_KEYPOINT_CONF:
-                if la["x"] < ra["x"]:
-                    left_forward += 1
-                else:
-                    right_forward += 1
-            break
-    total = left_forward + right_forward
-    if total < 30:
-        return "unknown"
-    left_ratio = left_forward / total
-    if left_ratio > 0.6:
-        return "orthodox"
-    elif left_ratio < 0.4:
-        return "southpaw"
-    return "unknown"
+# head-movement + stance now live in services/clip_metrics.py (subject-aware,
+# shared with the FastAPI subject-reselect endpoint).
 
 
 # --- Coach thumbnail extraction ---
@@ -595,7 +650,7 @@ def extract_coach_thumbnail(profile_id: str, intro_video_s3_key: str):
             from sqlalchemy.orm import sessionmaker
 
             engine = create_engine(
-                os.environ["DATABASE_URL"],
+                os.environ["DATABASE_URL"].replace("+asyncpg", ""),
                 pool_pre_ping=True,
                 connect_args={"sslmode": "require"},
             )
@@ -614,3 +669,65 @@ def extract_coach_thumbnail(profile_id: str, intro_video_s3_key: str):
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+# --- Stuck-job reaper ---
+
+reaper_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(["sqlalchemy", "psycopg2-binary", "redis"])
+)
+
+
+@app.function(
+    image=reaper_image,
+    secrets=[modal.Secret.from_name("southpaw-secrets")],
+    memory=512,
+    timeout=120,
+    schedule=modal.Period(minutes=5),
+)
+def reap_stale_jobs():
+    """
+    Fail jobs that will never finish, so users don't stare at a frozen
+    progress bar:
+      - 'processing' with a heartbeat older than STALE_HEARTBEAT_MINUTES
+        (container died past Modal's retries, network partition, etc.)
+      - 'queued' older than STALE_QUEUED_MINUTES (spawn was lost).
+    Publishes a 'failed' event so any open SSE stream resolves. Failed jobs
+    are safe to re-run: run_inference wipes its own strikes at start.
+    """
+    import json as json_lib
+    import redis as redis_lib
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(
+        os.environ["DATABASE_URL"].replace("+asyncpg", ""),
+        pool_pre_ping=True,
+        connect_args={"sslmode": "require"},
+    )
+    redis_client = redis_lib.from_url(os.environ["REDIS_URL"], ssl_cert_reqs=None)
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(f"""
+            UPDATE jobs SET
+                status = 'failed',
+                error = 'Processing timed out — please retry, or try a shorter clip',
+                error_code = 'timeout'
+            WHERE (
+                status = 'processing'
+                AND heartbeat_at IS NOT NULL
+                AND heartbeat_at < now() - interval '{STALE_HEARTBEAT_MINUTES} minutes'
+            ) OR (
+                status = 'queued'
+                AND created_at < now() - interval '{STALE_QUEUED_MINUTES} minutes'
+            )
+            RETURNING id
+        """)).fetchall()
+
+    for (job_id,) in rows:
+        logger.warning(f"Reaped stale job {job_id}")
+        try:
+            redis_client.publish(
+                f"job:{job_id}", json_lib.dumps({"status": "failed", "progress": 0})
+            )
+        except Exception as pub_err:
+            logger.warning(f"Could not publish reap event for job {job_id}: {pub_err}")

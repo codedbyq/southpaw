@@ -18,6 +18,8 @@ class User(Base):
     stripe_customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
     experience_level: Mapped[str] = mapped_column(String, nullable=False, default="intermediate")
     # beginner | intermediate | advanced | pro
+    biometric_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When set, identity data (skeletal stats, later ReID embeddings) may be stored — BIPA-style consent gate
     trend_feedback: Mapped[str | None] = mapped_column(String, nullable=True)
     trend_feedback_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

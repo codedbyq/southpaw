@@ -12,6 +12,7 @@ class Strike(Base):
     type: Mapped[str] = mapped_column(String, nullable=False)
     timestamp_seconds: Mapped[float] = mapped_column(Float, nullable=False)
     frame_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    subject_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # tracked subject this strike belongs to
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     arm_extension: Mapped[float | None] = mapped_column(Float, nullable=True)
     guard_dropped: Mapped[bool | None] = mapped_column(nullable=True)
