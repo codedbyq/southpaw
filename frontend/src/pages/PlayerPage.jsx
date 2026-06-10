@@ -16,6 +16,16 @@ const STRIKE_COLORS = {
 const STRIKE_LABELS = {
   jab: 'Jab', cross: 'Cross', hook: 'Hook',
   rear_kick: 'Rear kick', roundhouse_kick: 'Roundhouse',
+  lead_kick: 'Lead kick', kick: 'Kick',
+}
+
+// Human names for the weakest pose-quality component (from the keypoints JSON)
+const QUALITY_ISSUES = {
+  brightness: 'the footage is too dark',
+  subject_size: 'the subject is far from the camera',
+  kp_confidence: 'pose tracking was unreliable',
+  continuity: 'the subject was blocked or out of frame at times',
+  subject_clarity: 'multiple people made tracking ambiguous',
 }
 
 function fmtTs(s) {
@@ -59,6 +69,21 @@ export default function PlayerPage() {
   const [review, setReview] = useState(null)
   const [ratingLoading, setRatingLoading] = useState(false)
 
+  // Subject selection (which tracked fighter's metrics to show)
+  const [selectedSubject, setSelectedSubject] = useState(null)
+  const [subjects, setSubjects] = useState([])
+  const [switchingSubject, setSwitchingSubject] = useState(false)
+  const [hoveredSubject, setHoveredSubject] = useState(null)
+
+  // Footage quality components (reported from the keypoints JSON)
+  const [quality, setQuality] = useState(null)
+
+  // Strike labeling — ML training-data flywheel (✓/✗ on detections)
+  const [strikeLabels, setStrikeLabels] = useState({})   // strike_id → 'correct' | 'not_a_strike' | corrected type
+  const [typePickerFor, setTypePickerFor] = useState(null)
+  const [missedType, setMissedType] = useState('jab')
+  const [missedFlash, setMissedFlash] = useState(false)
+
   useEffect(() => {
     async function loadClip() {
       try {
@@ -73,6 +98,7 @@ export default function PlayerPage() {
         setSessions(Array.isArray(sessionsData) ? sessionsData : [])
         setSelectedSession(clipData.session_id || '')
         setStrikes(Array.isArray(strikesData) ? strikesData : [])
+        setSelectedSubject(clipData.selected_subject_id ?? null)
 
         try {
           const myReviews = await api.get('/reviews/me/athlete')
@@ -152,6 +178,54 @@ export default function PlayerPage() {
 
   function seek(t) {
     playerRef.current?.seekTo(t)
+  }
+
+  async function handleSelectSubject(id) {
+    if (id == null || id === selectedSubject || switchingSubject) return
+    setSwitchingSubject(true)
+    try {
+      const updatedClip = await api.post(`/clips/${clipId}/select-subject`, { subject_id: id })
+      const freshStrikes = await api.get(`/clips/${clipId}/strikes`).catch(() => [])
+      setClip(updatedClip)
+      setStrikes(Array.isArray(freshStrikes) ? freshStrikes : [])
+      setSelectedSubject(id)
+    } catch (err) {
+      console.error('Failed to switch subject', err)
+    } finally {
+      setSwitchingSubject(false)
+    }
+  }
+
+  async function sendStrikeLabel(strike, label, correctedType = null) {
+    // Optimistic — labels are training data, not user-critical state
+    setStrikeLabels(prev => ({ ...prev, [strike.id]: correctedType || label }))
+    setTypePickerFor(null)
+    try {
+      await api.post(`/clips/${clipId}/strike-labels`, {
+        strike_id: strike.id,
+        label,
+        corrected_type: correctedType,
+        timestamp_seconds: strike.timestamp_seconds,
+      })
+    } catch (err) {
+      console.error('Failed to save strike label', err)
+      setStrikeLabels(prev => { const next = { ...prev }; delete next[strike.id]; return next })
+    }
+  }
+
+  async function sendMissedStrike() {
+    const t = playerRef.current?.getCurrentTime() ?? 0
+    try {
+      await api.post(`/clips/${clipId}/strike-labels`, {
+        label: 'missed',
+        corrected_type: missedType,
+        timestamp_seconds: t,
+      })
+      setMissedFlash(true)
+      setTimeout(() => setMissedFlash(false), 1500)
+    } catch (err) {
+      console.error('Failed to record missed strike', err)
+    }
   }
 
   function handleTimeClick(t) {
@@ -255,6 +329,42 @@ export default function PlayerPage() {
             </div>
           </div>
 
+          {/* Subject selector — only when ByteTrack found more than one person.
+              Chip colors match the skeleton colors on the video; hovering a
+              chip highlights that person on the current frame. */}
+          {subjects.length > 1 && (
+            <div className="border-b border-line p-5">
+              <SectionLabel>
+                Fighter{switchingSubject && <span className="ml-1.5 text-muted">· updating…</span>}
+              </SectionLabel>
+              {clip.subject_confidence != null && clip.subject_confidence < 0.25 && (
+                <p className="mb-2.5 rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-2 text-[11px] leading-relaxed text-warning">
+                  We weren't sure who to track — confirm your fighter below.
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {subjects.map((s, i) => (
+                  <button key={s.id}
+                    onClick={() => handleSelectSubject(s.id)}
+                    onMouseEnter={() => setHoveredSubject(s.id)}
+                    onMouseLeave={() => setHoveredSubject(null)}
+                    disabled={switchingSubject}
+                    className={`chip ${selectedSubject === s.id ? 'active' : ''} disabled:opacity-50`}
+                    style={selectedSubject === s.id || hoveredSubject === s.id
+                      ? { borderColor: s.color, color: '#000', backgroundColor: s.color }
+                      : { borderColor: s.color }}>
+                    <span className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
+                      style={{ backgroundColor: selectedSubject === s.id || hoveredSubject === s.id ? '#000' : s.color }} />
+                    Fighter {i + 1}{s.strikes != null ? ` · ${s.strikes}` : ''}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] leading-relaxed text-muted">
+                Hover to highlight on the video. Pick whose metrics to show — background people and the opponent are excluded.
+              </p>
+            </div>
+          )}
+
           {/* Metrics */}
           <div className="flex-1 p-5">
             <SectionLabel>This clip</SectionLabel>
@@ -312,12 +422,43 @@ export default function PlayerPage() {
               ))}
             </select>
           </div>
+          {/* Footage-quality banner — set expectations before the metrics */}
+          {(() => {
+            const qScore = clip.pose_quality_score ?? quality?.score ?? null
+            if (qScore == null || qScore >= 0.7) return null
+            const components = Object.entries(quality || {})
+              .filter(([k]) => k in QUALITY_ISSUES)
+            const worst = components.length
+              ? components.reduce((a, b) => (b[1] < a[1] ? b : a))
+              : null
+            return (
+              <div className="mb-3 flex items-start gap-2.5 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3">
+                <span className="mt-0.5 text-warning">⚠</span>
+                <div>
+                  <p className="font-display text-[13px] font-bold uppercase tracking-wide text-warning">
+                    Footage quality is limiting analysis
+                  </p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-text3">
+                    {worst && worst[1] < 0.8
+                      ? `Main issue: ${QUALITY_ISSUES[worst[0]]}. `
+                      : ''}
+                    Metrics and AI feedback may be less reliable for this clip.
+                  </p>
+                </div>
+              </div>
+            )
+          })()}
           <CanvasPlayer
             ref={playerRef}
             videoUrl={clip.video_url}
             resultUrl={clip.result_url}
             comments={comments}
             onTimeClick={handleTimeClick}
+            selectedSubject={selectedSubject}
+            onSelectSubject={handleSelectSubject}
+            onSubjects={setSubjects}
+            onQuality={setQuality}
+            hoveredSubject={hoveredSubject}
           />
         </div>
 
@@ -336,20 +477,68 @@ export default function PlayerPage() {
           </div>
 
           <div className="flex-1 p-4 xl:overflow-y-auto">
-            {/* STRIKES */}
+            {/* STRIKES — rows seek the video; ✓/✗/≠ collect ML training labels */}
             {activeTab === 'strikes' && (
-              strikes.length === 0 ? (
-                <p className="py-8 text-center text-xs text-muted">No strikes detected yet.</p>
-              ) : strikes.map(s => (
-                <button key={s.id} onClick={() => seek(s.timestamp_seconds)}
-                  className="group flex w-full items-center gap-2.5 border-b border-line py-2.5 text-left last:border-0">
-                  <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: STRIKE_COLORS[s.type] || '#ccff00' }} />
-                  <span className="w-9 flex-shrink-0 font-display text-[15px] font-bold tabular-nums text-muted group-hover:text-kiwi">{fmtTs(s.timestamp_seconds)}</span>
-                  <span className="flex-1 text-[13px] text-text">{STRIKE_LABELS[s.type] || s.type.replace('_', ' ')}</span>
-                  {s.guard_dropped && <span className="rounded bg-danger/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-danger">G↓</span>}
-                  {s.arm_extension != null && <span className="font-display text-sm font-bold tabular-nums text-muted">{s.arm_extension.toFixed(2)}</span>}
-                </button>
-              ))
+              <>
+                {strikes.length === 0 ? (
+                  <p className="py-8 text-center text-xs text-muted">No strikes detected yet.</p>
+                ) : strikes.map(s => (
+                  <div key={s.id}>
+                    <div onClick={() => seek(s.timestamp_seconds)}
+                      className="group flex w-full cursor-pointer items-center gap-2.5 border-b border-line py-2.5 text-left last:border-0">
+                      <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: STRIKE_COLORS[s.type] || '#ccff00' }} />
+                      <span className="w-9 flex-shrink-0 font-display text-[15px] font-bold tabular-nums text-muted group-hover:text-kiwi">{fmtTs(s.timestamp_seconds)}</span>
+                      <span className="flex-1 text-[13px] text-text">{STRIKE_LABELS[s.type] || s.type.replace('_', ' ')}</span>
+                      {s.guard_dropped && <span className="rounded bg-danger/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-danger">G↓</span>}
+                      {s.arm_extension != null && <span className="font-display text-sm font-bold tabular-nums text-muted">{s.arm_extension.toFixed(2)}</span>}
+
+                      {/* Label affordance — hidden until hover, hidden once labeled */}
+                      {strikeLabels[s.id] ? (
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-kiwi">✓ noted</span>
+                      ) : (
+                        <span className="hidden flex-shrink-0 items-center gap-1 group-hover:flex">
+                          <button title="Correct call"
+                            onClick={e => { e.stopPropagation(); sendStrikeLabel(s, 'correct') }}
+                            className="rounded px-1 text-xs text-muted hover:bg-kiwi hover:text-black">✓</button>
+                          <button title="Not a strike"
+                            onClick={e => { e.stopPropagation(); sendStrikeLabel(s, 'not_a_strike') }}
+                            className="rounded px-1 text-xs text-muted hover:bg-danger hover:text-black">✗</button>
+                          <button title="Wrong type"
+                            onClick={e => { e.stopPropagation(); setTypePickerFor(typePickerFor === s.id ? null : s.id) }}
+                            className="rounded px-1 text-xs text-muted hover:bg-warning hover:text-black">≠</button>
+                        </span>
+                      )}
+                    </div>
+                    {typePickerFor === s.id && (
+                      <div className="flex flex-wrap gap-1.5 border-b border-line py-2 pl-12">
+                        {Object.entries(STRIKE_LABELS).filter(([t]) => t !== s.type).map(([t, label]) => (
+                          <button key={t} onClick={() => sendStrikeLabel(s, 'wrong_type', t)}
+                            className="chip text-[11px]">{label}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {/* Missed-strike capture at the playhead */}
+                <div className="mt-4 rounded-xl border border-line bg-surface2 p-3">
+                  <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted">We missed one?</p>
+                  <div className="flex items-center gap-2">
+                    <select value={missedType} onChange={e => setMissedType(e.target.value)}
+                      className="input w-auto flex-1 py-1 text-xs">
+                      {Object.entries(STRIKE_LABELS).map(([t, label]) => (
+                        <option key={t} value={t}>{label}</option>
+                      ))}
+                    </select>
+                    <Button size="sm" variant="outline" onClick={sendMissedStrike}>
+                      {missedFlash ? 'Noted ✓' : 'Mark at playhead'}
+                    </Button>
+                  </div>
+                  <p className="mt-1.5 text-[10px] leading-relaxed text-muted">
+                    Pause the video on the strike we missed, then mark it. This trains the detector.
+                  </p>
+                </div>
+              </>
             )}
 
             {/* COMMENTS */}

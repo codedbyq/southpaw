@@ -27,6 +27,7 @@ class UserResponse(BaseModel):
     credits_balance: int
     is_admin: bool
     experience_level: str
+    biometric_consent_at: datetime | None
     trend_feedback: str | None
     trend_feedback_at: datetime | None
     created_at: datetime
@@ -38,6 +39,10 @@ class UserResponse(BaseModel):
 class UpdateUserRequest(BaseModel):
     user_type: Literal["athlete", "coach"] | None = None
     experience_level: Literal["beginner", "intermediate", "advanced", "pro"] | None = None
+
+
+class ConsentRequest(BaseModel):
+    granted: bool
 
 
 @router.get("/me", response_model=UserResponse)
@@ -55,6 +60,7 @@ async def get_me(
         credits_balance=user.credits_balance,
         is_admin=user.is_admin,
         experience_level=user.experience_level,
+        biometric_consent_at=user.biometric_consent_at,
         trend_feedback=user.trend_feedback,
         trend_feedback_at=user.trend_feedback_at,
         created_at=user.created_at,
@@ -83,10 +89,34 @@ async def update_me(
         credits_balance=user.credits_balance,
         is_admin=user.is_admin,
         experience_level=user.experience_level,
+        biometric_consent_at=user.biometric_consent_at,
         trend_feedback=user.trend_feedback,
         trend_feedback_at=user.trend_feedback_at,
         created_at=user.created_at,
     )
+
+
+@router.post("/me/consent")
+async def set_biometric_consent(
+    body: ConsentRequest,
+    clerk_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Grant or revoke biometric consent (BIPA-style). Pose keypoints are
+    biometric data; identity samples / ReID features are only stored while
+    consent is on file. Revoking deletes existing identity samples."""
+    user = await _get_or_create_user(clerk_user_id, db)
+    if body.granted:
+        if user.biometric_consent_at is None:
+            user.biometric_consent_at = datetime.now(timezone.utc)
+    else:
+        user.biometric_consent_at = None
+        # Consent withdrawn — remove stored identity data, not just stop collecting
+        from sqlalchemy import delete
+        from models.identity_sample import IdentitySample
+        await db.execute(delete(IdentitySample).where(IdentitySample.user_id == user.id))
+    await db.commit()
+    return {"biometric_consent_at": user.biometric_consent_at}
 
 
 @router.get("/me/stats")
