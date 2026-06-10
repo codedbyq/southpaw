@@ -15,12 +15,20 @@ const STRIKE_COLORS = {
   rear_kick:       '#ff9500',
 }
 
-function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick }, ref) {
+// Show only the selected subject's strikes on the timeline (legacy clips have
+// no subject_id → selectedSubject is null → show all).
+function filterStrikes(all, subject) {
+  if (subject == null) return all
+  return all.filter(s => s.subject_id === subject)
+}
+
+function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick, selectedSubject = null, onSelectSubject, onSubjects }, ref) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const keypointsRef = useRef(null)      // full frames array
   const timestampIndexRef = useRef(null) // sorted timestamps for binary search
-  const activeSubjectRef = useRef(0)     // which skeleton to track
+  const activeSubjectRef = useRef(selectedSubject ?? 0) // which skeleton id to track
+  const allStrikesRef = useRef([])       // every subject's strikes (with subject_id)
   const rafRef = useRef(null)            // rAF handle for cleanup
   const showLabelsRef = useRef(true)     // whether to show strike labels
 
@@ -41,11 +49,20 @@ function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick }, ref) 
         keypointsRef.current = data.frames
         timestampIndexRef.current = buildIndex(data.frames)
 
-        // Extract all strikes for the timeline
-        const allStrikes = data.frames
+        // Every subject's strikes (each tagged with subject_id)
+        allStrikesRef.current = data.frames
           .filter(f => f.strikes && f.strikes.length > 0)
           .flatMap(f => f.strikes)
-        setStrikes(allStrikes)
+
+        // Report available subjects to the parent (for the selector)
+        if (onSubjects) {
+          const subjects = Array.isArray(data.subjects) && data.subjects.length
+            ? data.subjects
+            : [...new Set(data.frames.flatMap(f => (f.skeletons || []).map(s => s.id)))].map(id => ({ id }))
+          onSubjects(subjects)
+        }
+
+        setStrikes(filterStrikes(allStrikesRef.current, selectedSubject))
         setLoading(false)
       } catch (err) {
         setError('Failed to load pose data')
@@ -54,6 +71,12 @@ function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick }, ref) 
     }
     loadKeypoints()
   }, [resultUrl])
+
+  // Re-filter the timeline + highlight when the selected subject changes
+  useEffect(() => {
+    activeSubjectRef.current = selectedSubject ?? 0
+    if (!loading) setStrikes(filterStrikes(allStrikesRef.current, selectedSubject))
+  }, [selectedSubject, loading])
 
   // Start rAF loop once keypoints are loaded and video is ready
   useEffect(() => {
@@ -143,6 +166,7 @@ function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick }, ref) 
     const subject = findClosestSkeleton(frame.skeletons, x, y, canvas)
     if (subject !== null) {
       activeSubjectRef.current = subject
+      onSelectSubject?.(subject)
     }
   }
 

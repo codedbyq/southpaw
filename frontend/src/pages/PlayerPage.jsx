@@ -59,6 +59,11 @@ export default function PlayerPage() {
   const [review, setReview] = useState(null)
   const [ratingLoading, setRatingLoading] = useState(false)
 
+  // Subject selection (which tracked fighter's metrics to show)
+  const [selectedSubject, setSelectedSubject] = useState(null)
+  const [subjects, setSubjects] = useState([])
+  const [switchingSubject, setSwitchingSubject] = useState(false)
+
   useEffect(() => {
     async function loadClip() {
       try {
@@ -73,6 +78,7 @@ export default function PlayerPage() {
         setSessions(Array.isArray(sessionsData) ? sessionsData : [])
         setSelectedSession(clipData.session_id || '')
         setStrikes(Array.isArray(strikesData) ? strikesData : [])
+        setSelectedSubject(clipData.selected_subject_id ?? null)
 
         try {
           const myReviews = await api.get('/reviews/me/athlete')
@@ -152,6 +158,22 @@ export default function PlayerPage() {
 
   function seek(t) {
     playerRef.current?.seekTo(t)
+  }
+
+  async function handleSelectSubject(id) {
+    if (id == null || id === selectedSubject || switchingSubject) return
+    setSwitchingSubject(true)
+    try {
+      const updatedClip = await api.post(`/clips/${clipId}/select-subject`, { subject_id: id })
+      const freshStrikes = await api.get(`/clips/${clipId}/strikes`).catch(() => [])
+      setClip(updatedClip)
+      setStrikes(Array.isArray(freshStrikes) ? freshStrikes : [])
+      setSelectedSubject(id)
+    } catch (err) {
+      console.error('Failed to switch subject', err)
+    } finally {
+      setSwitchingSubject(false)
+    }
   }
 
   function handleTimeClick(t) {
@@ -255,6 +277,26 @@ export default function PlayerPage() {
             </div>
           </div>
 
+          {/* Subject selector — only when ByteTrack found more than one person */}
+          {subjects.length > 1 && (
+            <div className="border-b border-line p-5">
+              <SectionLabel>
+                Fighter{switchingSubject && <span className="ml-1.5 text-muted">· updating…</span>}
+              </SectionLabel>
+              <div className="flex flex-wrap gap-2">
+                {subjects.map((s, i) => (
+                  <button key={s.id} onClick={() => handleSelectSubject(s.id)} disabled={switchingSubject}
+                    className={`chip ${selectedSubject === s.id ? 'active' : ''} disabled:opacity-50`}>
+                    Fighter {i + 1}{s.strikes != null ? ` · ${s.strikes}` : ''}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] leading-relaxed text-muted">
+                Pick whose metrics to show — background people and the opponent are excluded.
+              </p>
+            </div>
+          )}
+
           {/* Metrics */}
           <div className="flex-1 p-5">
             <SectionLabel>This clip</SectionLabel>
@@ -318,6 +360,9 @@ export default function PlayerPage() {
             resultUrl={clip.result_url}
             comments={comments}
             onTimeClick={handleTimeClick}
+            selectedSubject={selectedSubject}
+            onSelectSubject={handleSelectSubject}
+            onSubjects={setSubjects}
           />
         </div>
 
