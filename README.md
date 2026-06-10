@@ -17,8 +17,9 @@ A martial arts AI analysis platform and coach marketplace. Athletes upload boxin
 | Blob Storage | AWS S3 (multipart upload) |
 | Database | PostgreSQL via Supabase |
 | ORM | SQLAlchemy async (asyncpg) |
-| Pose Estimation | YOLOv8 (COCO 17 keypoints) — model selected by tier: nano / small / medium |
-| Strike Classification | Rules-based velocity detection |
+| Pose Estimation | YOLO11-pose (COCO 17 keypoints) — small for Free/Pro (beta floor), medium for Elite |
+| Multi-person Tracking | ByteTrack (via `supervision`) — persistent subject IDs across frames |
+| Strike Classification | Rules classifier v2 — time-based windows, torso-length normalization, stance-aware naming, per-strike confidence |
 | LLM | DeepSeek (V3 / R1 by tier, OpenAI-compatible API) |
 | Payments | Stripe (credits, subscriptions, Connect payouts) |
 | Progress Delivery | SSE via Redis pub/sub (Upstash in prod) |
@@ -32,13 +33,18 @@ A martial arts AI analysis platform and coach marketplace. Athletes upload boxin
 ## Features
 
 ### Athlete
-- Upload training clips — YOLOv8 pose analysis runs automatically on Modal
-- Canvas overlay player with skeleton rendering, strike timeline, and seek-on-click
-- Per-strike metrics: arm extension, guard discipline, strike type
+- Upload training clips — YOLO11 pose analysis + ByteTrack subject tracking runs automatically on Modal
+- Canvas overlay player with color-coded skeletons per tracked subject, strike timeline, and seek-on-click
+- Subject selector — pick which fighter's metrics to show on multi-person clips (color-matched chips, hover-highlight on video); manual picks double as identity labels
+- Per-strike metrics with confidence scores: type (stance-aware jab/cross), arm extension (torso-normalized), guard discipline, peak velocity, hip rotation, recovery time
+- Footage-quality score per clip — banner names the issue (too dark, too far, occluded, multi-person ambiguity) and the AI hedges accordingly
+- Strike labeling — confirm/reject/correct detections and mark missed strikes; every tap is ML training data
 - Session management — group clips from the same training day
-- AI coaching feedback at clip, session, and trend level
-- Advanced analytics: combo detection, fatigue curve, head movement score
+- AI coaching feedback at clip, session, and trend level (trends only consume identity-confident clips)
+- Advanced analytics: combo detection, fatigue curve, head movement score, stance detection
+- Failed uploads show a friendly reason + one-click retry (idempotent reprocessing)
 - Dashboard stats: week streak, strikes this week, guard discipline
+- Biometric consent controls — identity data (skeletal proportions) stored only with explicit opt-in, deletable anytime
 - Browse coach marketplace and request paid clip or session reviews
 - Credit system — buy credits via Stripe, spend on coach reviews
 
@@ -52,7 +58,9 @@ A martial arts AI analysis platform and coach marketplace. Athletes upload boxin
 ### Platform
 - Subscription tiers (Free / Pro / Elite) with Stripe billing and monthly credit grants
 - Notification system — bell icon with unread count, click-to-navigate
-- Admin panel for coach moderation (approve / reject / feature)
+- Admin panel — coach moderation (approve / reject / feature) + processing-jobs debug view (status, error codes, stage timings, quality scores)
+- Production-hardened pipeline: idempotent processing runs, job heartbeats with a stale-job reaper cron, structured error codes, per-stage diagnostics, `pipeline_version` stamped on every clip for selective reprocessing
+- Golden-set evaluation harness — replays the strike classifier on recorded keypoints (no GPU) against hand labels for threshold tuning
 
 ---
 
@@ -108,41 +116,53 @@ southpaw/
 │       │   └── AdminPage.jsx
 │       └── utils/
 │           └── skeletonRenderer.js     # Pure canvas helpers; lime skeleton + strike ramp
+├── docs/
+│   ├── subject-identity-and-reid.md    # Subject selection + athlete-memory (ReID) design
+│   ├── strength-conditioning-v1.md     # S&C rep-analysis spec (planned)
+│   └── session-segmentation.md         # Whole-recording auto-segmentation spec (planned)
 └── backend/
     ├── main.py
     ├── dependencies.py
-    ├── modal_inference.py              # Modal functions: run_inference (YOLOv8), extract_coach_thumbnail
+    ├── modal_inference.py              # Modal functions: run_inference (pose+track+classify), reap_stale_jobs cron, extract_coach_thumbnail
+    ├── migrations/                     # Manually-applied SQL migrations
+    ├── scripts/
+    │   ├── golden_eval.py              # Replay classifier vs hand labels (no GPU)
+    │   └── reprocess_clip.py           # Respawn inference per clip / by pipeline_version
     ├── core/
     │   ├── config.py
     │   └── s3.py                       # Presigned URLs + multipart upload helpers
     ├── db/
     │   └── session.py                  # Async SQLAlchemy engine + get_db
     ├── models/
-    │   ├── clip.py
+    │   ├── clip.py                     # + pipeline_version, pose_quality_score, subject_confidence, clip_type
     │   ├── clip_comment.py
     │   ├── clip_review.py
     │   ├── coach_profile.py
     │   ├── credit_transaction.py
-    │   ├── job.py
+    │   ├── identity_sample.py          # Consent-gated "this subject = this athlete" labels (ReID groundwork)
+    │   ├── job.py                      # + heartbeat_at, error_code, diagnostics, attempt
     │   ├── notification.py
     │   ├── session.py
-    │   ├── strike.py
-    │   └── user.py
+    │   ├── strike.py                   # + subject_id; confidence now written by classifier v2
+    │   ├── strike_label.py             # Ground-truth strike feedback (ML training flywheel)
+    │   └── user.py                     # + biometric_consent_at
     ├── routers/
-    │   ├── admin.py                    # Coach moderation (is_admin gated)
-    │   ├── clips.py
+    │   ├── admin.py                    # Coach moderation + GET /admin/jobs debug view (is_admin gated)
+    │   ├── clips.py                    # CRUD + select-subject + retry + strike-labels
     │   ├── coaches.py
     │   ├── jobs.py
     │   ├── notifications.py
     │   ├── payments.py                 # Credits, subscriptions, Connect payouts
     │   ├── reviews.py
-    │   ├── sessions.py
+    │   ├── sessions.py                 # + trend feedback (identity-confidence gated)
     │   ├── strikes.py
     │   ├── uploads.py                  # Single + multipart upload; spawns Modal inference
-    │   ├── users.py
+    │   ├── users.py                    # + POST /users/me/consent
     │   └── webhooks.py                 # Clerk webhook handler
     ├── services/
-    │   ├── feedback.py                 # LLM pipeline (DeepSeek) — async + sync variants
+    │   ├── clip_metrics.py             # Subject scoring, skeletal stats, pose quality, head/stance (pure Python)
+    │   ├── strike_classifier.py        # Rules classifier v2 — replayable post-pass over keypoints JSON
+    │   ├── feedback.py                 # LLM pipeline (DeepSeek) — data_quality gating, async + sync variants
     │   └── notifications.py            # Async + sync notification helpers
     └── worker/
         ├── __init__.py
@@ -231,9 +251,9 @@ App: `http://localhost:5173`
 1. **Multipart init** — `POST /uploads/multipart/init` creates a clip row and S3 multipart upload, returns presigned URLs for each 10MB chunk
 2. **Chunk upload** — frontend uploads chunks in parallel (max 3 concurrent) directly to S3, collects ETags, with per-chunk retry
 3. **Complete** — `POST /uploads/multipart/complete` finalizes the S3 multipart assembly, then **spawns the Modal inference function** fire-and-forget and returns a `job_id`
-4. **Processing (Modal)** — `run_inference`: downloads clip → applies EXIF rotation → extracts thumbnail → runs YOLOv8 per frame (model by tier) → detects strikes → computes metrics (arm extension, guard dropped, head movement, combos, fatigue curve) → generates AI feedback → marks job complete
-5. **SSE** — Modal publishes progress to Redis pub/sub; `GET /jobs/:id/stream` forwards events to the browser in real time (falls back to polling if the stream drops)
-6. **Results** — keypoint JSON written to S3, strike rows and metrics saved to Postgres, feedback stored on the clip
+4. **Processing (Modal)** — `run_inference` (idempotent; wipes its own strike rows at start so retries are safe): downloads clip → EXIF rotation → 720p downscale + 60fps frame-halving → YOLO11 pose + ByteTrack per frame → classification post-pass (`strike_classifier.py`: time-based, torso-normalized, stance-aware, per-strike confidence) → composite primary-subject scoring → pose-quality score → thumbnail → AI feedback → marks job complete with per-stage diagnostics and a `pipeline_version` stamp
+5. **SSE** — Modal publishes progress (and a heartbeat) to Redis pub/sub; `GET /jobs/:id/stream` forwards events to the browser in real time (falls back to polling if the stream drops). A 5-minute reaper cron fails jobs with stale heartbeats so users never see a frozen progress bar
+6. **Results** — keypoint JSON (all subjects + strike debug traces) written to S3, the primary subject's confident strikes saved to Postgres, feedback stored on the clip. Low-confidence strikes stay in the JSON, out of metrics and LLM payloads
 
 A simpler single-PUT path (`POST /uploads/init` → `POST /uploads/complete`) also exists for small clips; the frontend `UploadButton` uses the multipart path.
 
@@ -256,8 +276,20 @@ The player uses a `<canvas>` absolutely positioned over a `<video>` element. A `
 |---|---|---|---|
 | Clips/month | 3 | Unlimited | Unlimited |
 | Credits/month | 5 | 25 | 75 |
-| Pose model | YOLOv8 nano | YOLOv8 small | YOLOv8 medium |
+| Pose model | YOLO11 small* | YOLO11 small | YOLO11 medium |
 | LLM | DeepSeek V3 | DeepSeek V3 | DeepSeek R1 |
 | Session feedback | ✗ | ✓ | ✓ |
 | Trend feedback | ✗ | ✗ | ✓ |
 | Marketplace | Browse | Request | Request |
+
+\* small is the floor for all tiers during the beta — keypoint stability feeds the velocity-based classifier. Free returns to nano at public launch.
+
+---
+
+## Design Docs
+
+Living specs for in-flight and planned systems, in [`docs/`](docs/):
+
+- [Subject identity & ReID](docs/subject-identity-and-reid.md) — subject selection (shipped) and the athlete-memory roadmap
+- [Session segmentation](docs/session-segmentation.md) — whole-recording upload → auto-detected rounds (beta week 2–3)
+- [Strength & Conditioning v1](docs/strength-conditioning-v1.md) — rep analysis for lifts (beta week 3–4)
