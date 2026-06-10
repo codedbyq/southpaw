@@ -211,6 +211,17 @@ App: `http://localhost:5173`
 
 > The FastAPI process resolves the deployed Modal function by name (`southpaw-inference` / `run_inference`), so `modal deploy` (or a running `modal serve`) must be live for uploads to process.
 
+### Demo / test account
+
+A seeded demo account exists on the **dev Clerk instance** for manual testing, agent-driven verification, and demos:
+
+- **Email:** `demo+clerk_test@southpaw.dev` — a Clerk *test identity* (`+clerk_test`): no real email is ever sent, and any verification code is always `424242`
+- **Credentials:** `DEMO_EMAIL` / `DEMO_PASSWORD` / `DEMO_CLERK_USER_ID` in `backend/.env` (gitignored; dev instance only — never reuse for prod)
+- The account is flagged `is_admin`, `pro` tier, and has biometric consent on, so it exercises the admin jobs view, session feedback, and identity-sample paths
+- Seed it with the golden-set clips (multi-person sparring, dark, 60fps, a failed upload) so every UI state has a stable fixture
+
+Convention: credentials are never `VITE_`-prefixed (anything `VITE_*` is compiled into the client bundle) and auto-login is never built into app code — automation drives the real sign-in form.
+
 ---
 
 ## Environment Variables
