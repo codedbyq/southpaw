@@ -63,6 +63,7 @@ SPORT_CONTEXT = {
 
 COMBO_WINDOW_SECONDS = 1.5
 MIN_COMBO_LENGTH = 2
+MAX_COMBO_LENGTH = 6  # longer chains are continuous output, not one combo
 
 
 def _strikes_by_job(strikes) -> list[list]:
@@ -74,20 +75,38 @@ def _strikes_by_job(strikes) -> list[list]:
     return [sorted(g, key=lambda s: s.timestamp_seconds) for g in groups.values()]
 
 
+def _split_chain(chain: list) -> list[list]:
+    """Split an over-long chain at its largest internal gap, recursively, until
+    every segment fits MAX_COMBO_LENGTH. At high output (every gap under the
+    combo window) the plain window check chains a whole round into one
+    47-strike 'combo'; the relatively largest pauses are the natural combo
+    boundaries."""
+    if len(chain) <= MAX_COMBO_LENGTH:
+        return [chain]
+    k = max(range(len(chain) - 1),
+            key=lambda i: chain[i + 1].timestamp_seconds - chain[i].timestamp_seconds)
+    return _split_chain(chain[:k + 1]) + _split_chain(chain[k + 1:])
+
+
 def _detect_combos(strikes) -> list[list]:
-    """Group strikes into combos — consecutive strikes within COMBO_WINDOW_SECONDS."""
+    """Group strikes into combos — consecutive strikes within COMBO_WINDOW_SECONDS,
+    capped at MAX_COMBO_LENGTH by splitting at the largest gaps."""
     combos = []
+
+    def _flush(chain):
+        for segment in _split_chain(chain):
+            if len(segment) >= MIN_COMBO_LENGTH:
+                combos.append(segment)
+
     for group in _strikes_by_job(strikes):
         current = [group[0]]
         for strike in group[1:]:
             if strike.timestamp_seconds - current[-1].timestamp_seconds <= COMBO_WINDOW_SECONDS:
                 current.append(strike)
             else:
-                if len(current) >= MIN_COMBO_LENGTH:
-                    combos.append(current)
+                _flush(current)
                 current = [strike]
-        if len(current) >= MIN_COMBO_LENGTH:
-            combos.append(current)
+        _flush(current)
     return combos
 
 
