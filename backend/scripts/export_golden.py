@@ -12,7 +12,12 @@ Verdict -> ground truth:
     not_a_strike -> drop
     missed       -> insert at the hand-marked timestamp with corrected_type
 
-Usage:  cd backend && ./venv/bin/python scripts/export_golden.py <clip_id> <golden_dir>
+Usage:  cd backend && ./venv/bin/python scripts/export_golden.py <clip_id> <golden_dir> [until_seconds]
+
+until_seconds truncates the export at a timestamp — for clips where tracking
+fails partway (subject swaps to the pad holder / sparring partner), label the
+clean prefix only and export with the cutoff; the contaminated tail needs no
+labels. Frames, detections, and marks past the cutoff are all dropped.
 """
 
 import asyncio
@@ -37,7 +42,12 @@ from models.strike import Strike
 from models.strike_label import StrikeLabel
 
 
-async def export(clip_id: str, golden_dir: Path) -> None:
+async def export(clip_id: str, golden_dir: Path, until: float | None = None) -> None:
+    """until: truncate the export at this timestamp (seconds). For clips where
+    tracking fails partway (e.g. the subject swaps to the pad holder), the
+    clean prefix is still valid ground truth — frames, detections, and labels
+    past the cutoff are all dropped, keeping the golden pair internally
+    consistent."""
     eng = create_async_engine(os.environ["DATABASE_URL"])
     Session = async_sessionmaker(eng, expire_on_commit=False)
     async with Session() as db:
@@ -59,6 +69,11 @@ async def export(clip_id: str, golden_dir: Path) -> None:
             .order_by(StrikeLabel.created_at.asc())
         )).scalars().all()
     await eng.dispose()
+
+    if until is not None:
+        strikes = [s for s in strikes if s.timestamp_seconds < until]
+        label_rows = [r for r in label_rows
+                      if r.timestamp_seconds is None or r.timestamp_seconds < until]
 
     # Latest verdict per strike wins; collect missed marks
     verdicts: dict = {}
@@ -121,6 +136,12 @@ async def export(clip_id: str, golden_dir: Path) -> None:
 
     golden_dir.mkdir(parents=True, exist_ok=True)
     name = f"{clip.filename.rsplit('.', 1)[0]}-{str(clip.id)[:8]}"
+    if until is not None:
+        name += f"-first{int(until)}s"
+        kp = json.loads(keypoints)
+        kp["frames"] = [f for f in kp["frames"] if f.get("timestamp", 0.0) < until]
+        kp["truncated_at_seconds"] = until
+        keypoints = json.dumps(kp).encode()
     (golden_dir / f"{name}.keypoints.json").write_bytes(keypoints)
 
     labels = {"strikes": true_strikes}
@@ -142,6 +163,7 @@ async def export(clip_id: str, golden_dir: Path) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         sys.exit(__doc__)
-    asyncio.run(export(sys.argv[1], Path(sys.argv[2])))
+    cutoff = float(sys.argv[3]) if len(sys.argv) == 4 else None
+    asyncio.run(export(sys.argv[1], Path(sys.argv[2]), until=cutoff))
