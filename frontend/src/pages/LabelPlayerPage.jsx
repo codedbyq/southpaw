@@ -18,7 +18,9 @@ const TAXONOMIES = {
       { key: '4', type: 'uppercut' },
       { key: '5', type: 'lead_kick' },
       { key: '6', type: 'rear_kick' },
-      { key: '7', type: 'kick' },
+      { key: '7', type: 'kick' },     // axis unclear — e.g. switch kick
+      { key: '8', type: 'knee' },
+      { key: '9', type: 'elbow' },
     ],
   },
 }

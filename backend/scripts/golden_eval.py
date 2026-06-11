@@ -48,6 +48,14 @@ def _norm_type(t):
     return TYPE_ALIASES.get(t, t)
 
 
+def _type_match(pred_type, label_type):
+    """A generic 'kick' label (axis unclear on video, e.g. switch kicks)
+    accepts any kick-family prediction."""
+    if label_type == "kick":
+        return pred_type == "kick" or pred_type.endswith("_kick")
+    return pred_type == label_type
+
+
 def match(predictions, labels):
     """Greedy nearest-first matching within tolerance.
     Returns list of (pred, label) pairs + unmatched preds + unmatched labels."""
@@ -127,9 +135,9 @@ def main():
             total_fn += len(false_neg)
             count_errors.append(abs(len(preds) - len(labels)))
 
-            type_correct = sum(1 for p, l in pairs if p["type"] == l["type"])
+            type_correct = sum(1 for p, l in pairs if _type_match(p["type"], l["type"]))
             for p, l in pairs:
-                if p["type"] == l["type"]:
+                if _type_match(p["type"], l["type"]):
                     per_class[l["type"]]["tp"] += 1
                 else:
                     per_class[p["type"]]["fp"] += 1

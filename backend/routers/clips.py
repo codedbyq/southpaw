@@ -261,7 +261,12 @@ VALID_STRIKE_LABELS = {"correct", "wrong_type", "not_a_strike", "missed"}
 # jab/cross encodes axis for punches. "roundhouse_kick" stays valid only for
 # backwards compatibility with the classifier's current naming — golden_eval
 # normalizes it to rear_kick when scoring.
-VALID_STRIKE_TYPES = {"jab", "cross", "hook", "uppercut", "rear_kick", "roundhouse_kick", "lead_kick", "kick"}
+VALID_STRIKE_TYPES = {
+    "jab", "cross", "hook", "uppercut",
+    "lead_kick", "rear_kick", "kick",  # kick = axis unclear (e.g. switch kick)
+    "knee", "elbow",                   # not detectable yet — labels measure the recall gap
+    "roundhouse_kick",
+}
 
 
 @router.post("/{clip_id}/strike-labels", status_code=status.HTTP_201_CREATED)
