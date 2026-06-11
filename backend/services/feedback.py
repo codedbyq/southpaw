@@ -9,6 +9,7 @@ compute_session_hash()  — MD5 of summary dict, used for cache invalidation
 
 import hashlib
 import json
+import math
 
 from openai import AsyncOpenAI, OpenAI
 from core.config import settings
@@ -64,21 +65,29 @@ COMBO_WINDOW_SECONDS = 1.5
 MIN_COMBO_LENGTH = 2
 
 
+def _strikes_by_job(strikes) -> list[list]:
+    """Group strikes by job (one job = one clip) and sort each group by time.
+    timestamp_seconds is clip-relative, so sequences must never span clips."""
+    groups: dict = {}
+    for s in strikes:
+        groups.setdefault(s.job_id, []).append(s)
+    return [sorted(g, key=lambda s: s.timestamp_seconds) for g in groups.values()]
+
+
 def _detect_combos(strikes) -> list[list]:
     """Group strikes into combos — consecutive strikes within COMBO_WINDOW_SECONDS."""
-    if not strikes:
-        return []
-    sorted_strikes = sorted(strikes, key=lambda s: s.timestamp_seconds)
-    combos, current = [], [sorted_strikes[0]]
-    for strike in sorted_strikes[1:]:
-        if strike.timestamp_seconds - current[-1].timestamp_seconds <= COMBO_WINDOW_SECONDS:
-            current.append(strike)
-        else:
-            if len(current) >= MIN_COMBO_LENGTH:
-                combos.append(current)
-            current = [strike]
-    if len(current) >= MIN_COMBO_LENGTH:
-        combos.append(current)
+    combos = []
+    for group in _strikes_by_job(strikes):
+        current = [group[0]]
+        for strike in group[1:]:
+            if strike.timestamp_seconds - current[-1].timestamp_seconds <= COMBO_WINDOW_SECONDS:
+                current.append(strike)
+            else:
+                if len(current) >= MIN_COMBO_LENGTH:
+                    combos.append(current)
+                current = [strike]
+        if len(current) >= MIN_COMBO_LENGTH:
+            combos.append(current)
     return combos
 
 
@@ -111,18 +120,127 @@ def _aggregate_combos(strikes) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Predictability — how readable the athlete's offense is
+# ---------------------------------------------------------------------------
+
+PREDICTABILITY_MIN_TRANSITIONS = 10  # below this, entropy is noise
+PREDICTABILITY_MIN_COMBOS = 5        # below this, opener/repeat stats are noise
+
+
+def _compute_predictability(strikes) -> dict | None:
+    """Pattern predictability over strike-to-strike transitions.
+
+    First-order Markov view: for each strike type, the distribution of what
+    follows it within COMBO_WINDOW_SECONDS. Score = 1 - normalized conditional
+    entropy, scaled 0-100. 0 = maximally varied, 100 = an opponent who knows
+    your last strike always knows your next one.
+    """
+    transitions: dict[str, dict[str, int]] = {}
+    n_transitions = 0
+    for group in _strikes_by_job(strikes):
+        for prev, nxt in zip(group, group[1:]):
+            if nxt.timestamp_seconds - prev.timestamp_seconds > COMBO_WINDOW_SECONDS:
+                continue
+            row = transitions.setdefault(prev.type, {})
+            row[nxt.type] = row.get(nxt.type, 0) + 1
+            n_transitions += 1
+
+    if n_transitions < PREDICTABILITY_MIN_TRANSITIONS:
+        return None
+
+    types = set(transitions)
+    for row in transitions.values():
+        types.update(row)
+
+    if len(types) == 1:
+        score = 100
+    else:
+        h_cond = 0.0
+        for row in transitions.values():
+            row_total = sum(row.values())
+            h_row = -sum((c / row_total) * math.log2(c / row_total) for c in row.values())
+            h_cond += (row_total / n_transitions) * h_row
+        score = round((1 - h_cond / math.log2(len(types))) * 100)
+
+    # Most readable habits: high-probability follow-ups with enough samples
+    # to mean something (rank by probability, break ties by frequency).
+    top_transitions = []
+    for prev, row in transitions.items():
+        row_total = sum(row.values())
+        if row_total < 4:
+            continue
+        for nxt, count in row.items():
+            if count >= 3:
+                top_transitions.append({
+                    "after": prev,
+                    "then": nxt,
+                    "count": count,
+                    "pct": round(count / row_total * 100),
+                })
+    top_transitions.sort(key=lambda t: (-t["pct"], -t["count"]))
+    top_transitions = top_transitions[:3]
+
+    combos = _detect_combos(strikes)
+    top_opener = top_closer = combo_repeat_pct = None
+    if len(combos) >= PREDICTABILITY_MIN_COMBOS:
+        openers: dict[str, int] = {}
+        closers: dict[str, int] = {}
+        sequences: dict[tuple, int] = {}
+        for c in combos:
+            openers[c[0].type] = openers.get(c[0].type, 0) + 1
+            closers[c[-1].type] = closers.get(c[-1].type, 0) + 1
+            seq = tuple(s.type for s in c)
+            sequences[seq] = sequences.get(seq, 0) + 1
+
+        def _top(counts: dict[str, int]) -> dict:
+            t, count = max(counts.items(), key=lambda x: x[1])
+            return {"type": t, "count": count, "pct": round(count / len(combos) * 100)}
+
+        top_opener = _top(openers)
+        top_closer = _top(closers)
+        top3 = sorted(sequences.values(), reverse=True)[:3]
+        combo_repeat_pct = round(sum(top3) / len(combos) * 100)
+
+    return {
+        "score": score,
+        "transitions_measured": n_transitions,
+        "top_transitions": top_transitions,
+        "top_opener": top_opener,
+        "top_closer": top_closer,
+        "combo_repeat_pct": combo_repeat_pct,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Fatigue curve
 # ---------------------------------------------------------------------------
 
-def _compute_fatigue_curve(strikes, total_duration_seconds: int) -> list[dict] | None:
-    """Split session into thirds and compute output + form metrics per third."""
+def _clip_offsets(clips, job_to_clip: dict) -> dict:
+    """Map job_id -> its clip's start offset on the session timeline.
+    Strike timestamps are clip-relative, so multi-clip aggregation must shift
+    each clip's strikes by the cumulative duration of the clips before it."""
+    ordered = sorted(clips, key=lambda c: c.created_at)
+    start, t = {}, 0
+    for c in ordered:
+        start[c.id] = t
+        t += c.duration_seconds or 0
+    return {jid: start[cid] for jid, cid in job_to_clip.items() if cid in start}
+
+
+def _compute_fatigue_curve(strikes, total_duration_seconds: int, offsets: dict | None = None) -> list[dict] | None:
+    """Split session into thirds and compute output + form metrics per third.
+    offsets (job_id -> seconds, from _clip_offsets) places clip-relative
+    timestamps on the session timeline; omit for single-clip calls."""
     if not strikes or not total_duration_seconds or total_duration_seconds < 30:
         return None
 
     third = total_duration_seconds / 3
 
+    def _session_ts(s):
+        return s.timestamp_seconds + (offsets.get(s.job_id, 0) if offsets else 0)
+
     def _third_stats(t_start, t_end):
-        s = [x for x in strikes if t_start <= x.timestamp_seconds < t_end]
+        s = [x for x in strikes if t_start <= _session_ts(x) < t_end]
         ext = [x.arm_extension for x in s if x.arm_extension is not None]
         duration_min = (t_end - t_start) / 60
         return {
@@ -243,14 +361,18 @@ def build_clip_summary(clip, strikes, user=None) -> dict:
         ),
         "velocity_and_recovery": _aggregate_velocity_and_recovery(strikes),
         "combos": _aggregate_combos(strikes),
+        "predictability": _compute_predictability(strikes),
         "fatigue_curve": _compute_fatigue_curve(strikes, duration),
         **agg,
     }
 
 
-def build_session_summary(session, clips, strikes, user=None) -> dict:
-    """Summary across all clips in a session."""
+def build_session_summary(session, clips, strikes, user=None, job_to_clip: dict | None = None) -> dict:
+    """Summary across all clips in a session. job_to_clip (job_id -> clip_id)
+    lets the fatigue curve place clip-relative strike times on the session
+    timeline; without it the curve treats timestamps as session-absolute."""
     total_duration = sum(c.duration_seconds or 0 for c in clips)
+    offsets = _clip_offsets(clips, job_to_clip) if job_to_clip else None
     total_strikes = len(strikes)
     agg = _aggregate_strikes(strikes)
 
@@ -284,7 +406,8 @@ def build_session_summary(session, clips, strikes, user=None) -> dict:
         ),
         "velocity_and_recovery": _aggregate_velocity_and_recovery(strikes),
         "combos": _aggregate_combos(strikes),
-        "fatigue_curve": _compute_fatigue_curve(strikes, total_duration),
+        "predictability": _compute_predictability(strikes),
+        "fatigue_curve": _compute_fatigue_curve(strikes, total_duration, offsets=offsets),
         **agg,
     }
 
@@ -456,6 +579,27 @@ CONFIDENCE POLICY (non-negotiable):
             for seq in combos["top_sequences"]:
                 labels = " → ".join(s.replace("_", " ") for s in seq["sequence"])
                 lines.append(f"    {labels} × {seq['count']}")
+
+    pred = summary.get("predictability")
+    if pred:
+        lines.append("\nPredictability (0 = varied offense, 100 = an opponent can read the next strike):")
+        lines.append(f"  Score: {pred['score']}/100, measured over {pred['transitions_measured']} strike-to-strike transitions")
+        for t in pred["top_transitions"]:
+            after = t["after"].replace("_", " ")
+            then = t["then"].replace("_", " ")
+            lines.append(f"  After the {after}, the {then} follows {t['pct']}% of the time ({t['count']}x)")
+        if pred.get("top_opener"):
+            o = pred["top_opener"]
+            lines.append(f"  Opens {o['pct']}% of combos with the {o['type'].replace('_', ' ')}")
+        if pred.get("top_closer"):
+            c = pred["top_closer"]
+            lines.append(f"  Ends {c['pct']}% of combos with the {c['type'].replace('_', ' ')}")
+        if pred.get("combo_repeat_pct") is not None:
+            lines.append(f"  {pred['combo_repeat_pct']}% of combos are one of the top 3 sequences")
+        lines.append(
+            "  Note: heavy repetition is expected and fine in pad work or drilling; "
+            "in sparring, bag work, or shadow boxing a high score means a live opponent could time and counter the pattern."
+        )
 
     fatigue = summary.get("fatigue_curve")
     if fatigue:

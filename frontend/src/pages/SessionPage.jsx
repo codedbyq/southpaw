@@ -24,6 +24,19 @@ function guardColor(pct) {
   return 'var(--color-kiwi)'
 }
 
+// High predictability = readable offense = bad
+function predColor(score) {
+  if (score > 65) return 'var(--color-danger)'
+  if (score > 40) return 'var(--color-warning)'
+  return 'var(--color-kiwi)'
+}
+
+function predLabel(score) {
+  if (score > 65) return 'Predictable'
+  if (score > 40) return 'Moderate'
+  return 'Varied'
+}
+
 export default function SessionPage() {
   const { sessionId } = useParams()
   const navigate = useNavigate()
@@ -279,6 +292,11 @@ export default function SessionPage() {
           {/* Analytics tab */}
           {activeTab === 'analytics' && (
             <div className="space-y-8">
+              {/* Predictability */}
+              {analytics?.predictability && (
+                <PredictabilityPanel data={analytics.predictability} sessionType={session.session_type} />
+              )}
+
               {/* Fatigue curve */}
               {analytics?.fatigue_curve?.length > 0 && (
                 <div>
@@ -314,7 +332,7 @@ export default function SessionPage() {
                 </div>
               )}
 
-              {!analytics?.fatigue_curve?.length && !analytics?.guard_by_type?.length && (
+              {!analytics?.predictability && !analytics?.fatigue_curve?.length && !analytics?.guard_by_type?.length && (
                 <p className="text-sm text-muted">Analytics appear once clips finish processing.</p>
               )}
             </div>
@@ -422,6 +440,48 @@ function ClipMini({ value, label, color = 'text-text' }) {
     <div className="text-right">
       <p className={`font-display text-xl font-extrabold leading-none tabular-nums ${color}`}>{value}</p>
       <p className="mt-1 text-[9px] font-bold uppercase tracking-wide text-muted">{label}</p>
+    </div>
+  )
+}
+
+function PredictabilityPanel({ data, sessionType }) {
+  const color = predColor(data.score)
+  return (
+    <div>
+      <SecTitle>Predictability</SecTitle>
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
+        <div className="flex-shrink-0 sm:w-40">
+          <p className="font-display text-[42px] font-black leading-none tracking-tight tabular-nums" style={{ color }}>
+            {data.score}<span className="ml-0.5 font-display text-base font-semibold text-muted">/100</span>
+          </p>
+          <p className="mt-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ color }}>{predLabel(data.score)}</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted">
+            How readable your offense is — over {data.transitions_measured} strike-to-strike transitions
+          </p>
+        </div>
+        <div className="min-w-0 flex-1">
+          {data.top_transitions.map((t, i) => (
+            <div key={i} className="flex items-center gap-3 border-b border-line py-2 last:border-0">
+              <span className="flex-1 text-[13px] capitalize text-text3">
+                after {t.after.replace('_', ' ')} → <span className="font-semibold text-text">{t.then.replace('_', ' ')}</span>
+              </span>
+              <div className="h-[5px] w-24 flex-shrink-0 overflow-hidden rounded-full bg-surface3">
+                <div className="h-full rounded-full transition-all duration-[600ms]" style={{ width: `${t.pct}%`, background: predColor(t.pct) }} />
+              </div>
+              <span className="w-9 text-right font-display text-sm font-extrabold tabular-nums" style={{ color: predColor(t.pct) }}>{t.pct}%</span>
+            </div>
+          ))}
+          {(data.top_opener || data.combo_repeat_pct != null) && (
+            <p className="mt-2.5 text-xs leading-relaxed text-text3">
+              {data.top_opener && <>Opens <strong className="font-semibold text-text">{data.top_opener.pct}%</strong> of combos with the {data.top_opener.type.replace('_', ' ')}.</>}
+              {data.combo_repeat_pct != null && <> <strong className="font-semibold text-text">{data.combo_repeat_pct}%</strong> of combos are a top-3 sequence.</>}
+            </p>
+          )}
+          {sessionType === 'pads' && (
+            <p className="mt-1.5 text-[11px] italic text-muted">High repetition is expected in pad work — this score matters most for sparring and bag sessions.</p>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

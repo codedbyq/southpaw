@@ -12,7 +12,7 @@ from models.clip import Clip
 from models.job import Job
 from models.strike import Strike
 from routers.clips import _build_clip_response, ClipResponse
-from services.feedback import build_session_summary, compute_session_hash, generate_feedback, build_trend_summary, generate_trend_feedback, _aggregate_combos, _compute_fatigue_curve
+from services.feedback import build_session_summary, compute_session_hash, generate_feedback, build_trend_summary, generate_trend_feedback, _aggregate_combos, _clip_offsets, _compute_fatigue_curve, _compute_predictability
 from models.user import User
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -294,14 +294,15 @@ async def get_session_analytics(
     clips = clips_result.scalars().all()
 
     strikes = []
+    job_to_clip = {}
     if clips:
-        job_ids_result = await db.execute(
-            select(Job.id).where(Job.clip_id.in_([c.id for c in clips]))
+        job_rows = await db.execute(
+            select(Job.id, Job.clip_id).where(Job.clip_id.in_([c.id for c in clips]))
         )
-        job_ids = [r[0] for r in job_ids_result]
-        if job_ids:
+        job_to_clip = {jid: cid for jid, cid in job_rows}
+        if job_to_clip:
             strikes_result = await db.execute(
-                select(Strike).where(Strike.job_id.in_(job_ids))
+                select(Strike).where(Strike.job_id.in_(list(job_to_clip)))
             )
             strikes = strikes_result.scalars().all()
 
@@ -330,7 +331,11 @@ async def get_session_analytics(
 
     return {
         "combos": _aggregate_combos(strikes),
-        "fatigue_curve": _compute_fatigue_curve(strikes, total_duration),
+        "predictability": _compute_predictability(strikes),
+        "fatigue_curve": _compute_fatigue_curve(
+            strikes, total_duration,
+            offsets=_clip_offsets(clips, job_to_clip) if job_to_clip else None,
+        ),
         "head_movement_score": avg_head_movement,
         "guard_by_type": guard_by_type,
     }
@@ -364,15 +369,15 @@ async def get_session_feedback(
             detail="Session feedback requires at least 2 clips — single clip sessions already have clip-level feedback"
         )
 
-    job_ids_result = await db.execute(
-        select(Job.id).where(Job.clip_id.in_([c.id for c in clips]))
+    job_rows = await db.execute(
+        select(Job.id, Job.clip_id).where(Job.clip_id.in_([c.id for c in clips]))
     )
-    job_ids = [row[0] for row in job_ids_result.all()]
+    job_to_clip = {jid: cid for jid, cid in job_rows}
 
     strikes = []
-    if job_ids:
+    if job_to_clip:
         strikes_result = await db.execute(
-            select(Strike).where(Strike.job_id.in_(job_ids))
+            select(Strike).where(Strike.job_id.in_(list(job_to_clip)))
         )
         strikes = strikes_result.scalars().all()
 
@@ -383,7 +388,7 @@ async def get_session_feedback(
     user_result = await db.execute(select(User).where(User.clerk_user_id == user_id))
     current_user = user_result.scalar_one_or_none()
 
-    summary = build_session_summary(session, clips, strikes, user=current_user)
+    summary = build_session_summary(session, clips, strikes, user=current_user, job_to_clip=job_to_clip)
     current_hash = compute_session_hash(summary)
 
     # Return cached feedback if the session is clean and the data hasn't changed
