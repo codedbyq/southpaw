@@ -206,6 +206,9 @@ function CanvasPlayer({ videoUrl, resultUrl, comments = [], onTimeClick, selecte
   useImperativeHandle(ref, () => ({
     seekTo,
     getCurrentTime: () => videoRef.current?.currentTime ?? 0,
+    play: () => videoRef.current?.play(),
+    pause: () => videoRef.current?.pause(),
+    setPlaybackRate: (rate) => { if (videoRef.current) videoRef.current.playbackRate = rate },
   }), [])
 
   const filteredStrikes = strikeFilter === 'all'

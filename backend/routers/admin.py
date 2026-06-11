@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies import get_current_user
@@ -51,6 +51,87 @@ async def require_admin(
     if not user or not user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return user
+
+
+# --- Labeling queue (golden-set annotation workflow) ---
+
+@router.get("/label-queue")
+async def label_queue(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """The admin's own processed clips with detection counts and label
+    coverage — the worklist for the LabelPlayerPage. Labels post through the
+    owner-scoped /clips/:id/strike-labels endpoint, so the queue only lists
+    clips the admin uploaded."""
+    from models.clip import Clip
+    from models.job import Job
+    from models.strike import Strike
+    from models.strike_label import StrikeLabel
+
+    clips = (await db.execute(
+        select(Clip).where(Clip.clerk_user_id == admin.clerk_user_id)
+        .order_by(Clip.created_at.desc())
+    )).scalars().all()
+    if not clips:
+        return []
+
+    clip_ids = [c.id for c in clips]
+    detection_counts = dict((await db.execute(
+        select(Job.clip_id, func.count(Strike.id))
+        .join(Strike, Strike.job_id == Job.id)
+        .where(Job.clip_id.in_(clip_ids))
+        .group_by(Job.clip_id)
+    )).all())
+    labeled_counts = dict((await db.execute(
+        select(StrikeLabel.clip_id, func.count(func.distinct(StrikeLabel.strike_id)))
+        .where(StrikeLabel.clip_id.in_(clip_ids), StrikeLabel.strike_id.isnot(None))
+        .group_by(StrikeLabel.clip_id)
+    )).all())
+
+    return [
+        {
+            "id": str(c.id),
+            "filename": c.filename,
+            "status": c.status,
+            "clip_type": c.clip_type,
+            "duration_seconds": c.duration_seconds,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "detections": detection_counts.get(c.id, 0),
+            "labeled": labeled_counts.get(c.id, 0),
+        }
+        for c in clips
+    ]
+
+
+@router.get("/clips/{clip_id}/strike-labels")
+async def clip_strike_labels(
+    clip_id: uuid.UUID,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Existing labels for a clip so the labeling page can resume progress —
+    latest verdict per strike, plus missed-strike marks."""
+    from models.strike_label import StrikeLabel
+
+    rows = (await db.execute(
+        select(StrikeLabel).where(StrikeLabel.clip_id == clip_id)
+        .order_by(StrikeLabel.created_at.asc())
+    )).scalars().all()
+
+    verdicts: dict = {}
+    missed = []
+    for r in rows:
+        if r.label == "missed":
+            missed.append({
+                "id": str(r.id),
+                "timestamp_seconds": r.timestamp_seconds,
+                "corrected_type": r.corrected_type,
+            })
+        elif r.strike_id is not None:
+            # chronological order — later rows overwrite, so latest verdict wins
+            verdicts[str(r.strike_id)] = {"label": r.label, "corrected_type": r.corrected_type}
+    return {"verdicts": verdicts, "missed": missed}
 
 
 # --- Routes ---

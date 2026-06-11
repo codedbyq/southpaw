@@ -12,6 +12,8 @@ import SessionPage from './pages/SessionPage'
 import MarketplacePage from './pages/MarketplacePage'
 import CoachPublicProfilePage from './pages/CoachPublicProfilePage'
 import AdminPage from './pages/AdminPage'
+import LabelQueuePage from './pages/LabelQueuePage'
+import LabelPlayerPage from './pages/LabelPlayerPage'
 import PricingPage from './pages/PricingPage'
 import CoachReviewQueuePage from './pages/CoachReviewQueuePage'
 import CoachReviewPlayerPage from './pages/CoachReviewPlayerPage'
@@ -82,6 +84,22 @@ function App() {
         element={
           <ProtectedRoute>
             <AdminPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/label"
+        element={
+          <ProtectedRoute>
+            <LabelQueuePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/label/:clipId"
+        element={
+          <ProtectedRoute>
+            <LabelPlayerPage />
           </ProtectedRoute>
         }
       />
