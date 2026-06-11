@@ -121,16 +121,27 @@ export default function LabelPlayerPage() {
 
   async function addMissed(type) {
     const t = playerRef.current?.getCurrentTime() ?? 0
-    setMissed(prev => [...prev, { timestamp_seconds: t, corrected_type: type }])
     setMissedArm(false)
     try {
-      await api.post(`/clips/${clipId}/strike-labels`, {
+      const res = await api.post(`/clips/${clipId}/strike-labels`, {
         label: 'missed',
         corrected_type: type,
         timestamp_seconds: t,
       })
-    } catch {
-      setMissed(prev => prev.slice(0, -1))
+      setMissed(prev => [...prev, { id: res.id, timestamp_seconds: t, corrected_type: type }]
+        .sort((a, b) => a.timestamp_seconds - b.timestamp_seconds))
+    } catch (err) {
+      console.error('Failed to record missed strike', err)
+    }
+  }
+
+  async function removeMissed(mark) {
+    setMissed(prev => prev.filter(m => m.id !== mark.id))
+    try {
+      await api.delete(`/clips/${clipId}/strike-labels/${mark.id}`)
+    } catch (err) {
+      console.error('Failed to remove missed strike', err)
+      setMissed(prev => [...prev, mark].sort((a, b) => a.timestamp_seconds - b.timestamp_seconds))
     }
   }
 
@@ -253,6 +264,33 @@ export default function LabelPlayerPage() {
             })}
             {strikes.length === 0 && <p className="p-2 text-sm text-muted">No detections on this clip.</p>}
           </div>
+          {missed.length > 0 && (
+            <div className="border-t border-line p-3">
+              <p className="mb-1.5 px-2.5 text-[10px] font-bold uppercase tracking-wider text-muted">
+                Missed strikes you added ({missed.length})
+              </p>
+              {missed.map(m => (
+                <div key={m.id || m.timestamp_seconds} className="group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 hover:bg-surface2">
+                  <button
+                    onClick={() => { setLooping(false); playerRef.current?.pause(); playerRef.current?.seekTo(m.timestamp_seconds) }}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                  >
+                    <span className="w-10 flex-shrink-0 font-mono text-[11px] tabular-nums text-muted">{m.timestamp_seconds.toFixed(1)}s</span>
+                    <span className="truncate text-[13px] capitalize text-warning">+ {m.corrected_type?.replace('_', ' ')}</span>
+                  </button>
+                  {m.id && (
+                    <button
+                      onClick={() => removeMissed(m)}
+                      className="flex-shrink-0 px-1 font-display text-base font-bold text-muted transition-colors hover:text-danger"
+                      title="Remove this mark"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {current && (
             <div className="border-t border-line p-3 text-[11px] text-muted">
               Reviewing #{idx + 1}: <span className="capitalize text-text">{current.type.replace('_', ' ')}</span> at {current.timestamp_seconds.toFixed(2)}s

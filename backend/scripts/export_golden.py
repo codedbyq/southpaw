@@ -78,6 +78,19 @@ async def export(clip_id: str, golden_dir: Path) -> None:
             "Label every detection in /label/<clip_id> first."
         )
 
+    # Defensive dedupe: repeated 'm' presses on the same moment create
+    # duplicate marks; two identical true strikes would charge the classifier
+    # a phantom false negative.
+    missed.sort(key=lambda r: r.timestamp_seconds)
+    deduped = []
+    for r in missed:
+        if deduped and r.corrected_type == deduped[-1].corrected_type \
+                and r.timestamp_seconds - deduped[-1].timestamp_seconds < 0.3:
+            continue
+        deduped.append(r)
+    dup_count = len(missed) - len(deduped)
+    missed = deduped
+
     true_strikes = []
     for s in strikes:
         v = verdicts[s.id]
@@ -89,6 +102,18 @@ async def export(clip_id: str, golden_dir: Path) -> None:
     for r in missed:
         true_strikes.append({"timestamp_seconds": r.timestamp_seconds, "type": r.corrected_type})
     true_strikes.sort(key=lambda x: x["timestamp_seconds"])
+
+    # Final pass: a missed-mark stacked on a detection verdict (same type
+    # within 0.15s) is one strike, not two — nobody lands two same-type
+    # strikes that close (the classifier's own cooldown is 0.2s).
+    final = []
+    for s in true_strikes:
+        if final and s["type"] == final[-1]["type"] \
+                and s["timestamp_seconds"] - final[-1]["timestamp_seconds"] < 0.15:
+            dup_count += 1
+            continue
+        final.append(s)
+    true_strikes = final
 
     s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
     obj = s3.get_object(Bucket=os.environ["S3_BUCKET_NAME"], Key=job.result_s3_key)
@@ -111,7 +136,8 @@ async def export(clip_id: str, golden_dir: Path) -> None:
     corrected = sum(1 for s in strikes if verdicts[s.id].label == "wrong_type")
     print(
         f"Exported {name}: {len(strikes)} detections -> {len(true_strikes)} true strikes "
-        f"({dropped} dropped, {corrected} type-corrected, {len(missed)} missed added)"
+        f"({dropped} dropped, {corrected} type-corrected, {len(missed)} missed added"
+        + (f", {dup_count} duplicate missed-marks ignored" if dup_count else "") + ")"
     )
 
 

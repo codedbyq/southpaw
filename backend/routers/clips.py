@@ -315,6 +315,32 @@ async def create_strike_label(
     return {"id": str(row.id), "label": row.label}
 
 
+@router.delete("/{clip_id}/strike-labels/{label_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_strike_label(
+    clip_id: uuid.UUID,
+    label_id: uuid.UUID,
+    clerk_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a missed-strike mark (accidental/duplicate presses in the
+    labeling tool). Restricted to 'missed' rows — detection verdicts are
+    corrected by re-labeling (latest wins), and their history stays."""
+    from models.strike_label import StrikeLabel
+
+    clip = await _get_clip_for_user(clip_id, clerk_user_id, db)
+    row = (await db.execute(
+        select(StrikeLabel).where(
+            StrikeLabel.id == label_id,
+            StrikeLabel.clip_id == clip.id,
+            StrikeLabel.label == "missed",
+        )
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Missed-strike label not found on this clip")
+    await db.delete(row)
+    await db.commit()
+
+
 @router.delete("/{clip_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_clip(
     clip_id: uuid.UUID,
