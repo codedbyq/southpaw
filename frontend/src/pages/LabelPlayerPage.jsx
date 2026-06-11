@@ -218,10 +218,16 @@ export default function LabelPlayerPage() {
             </span>
           </div>
         </div>
-        {done && (
+        {done ? (
           <p className="mt-2 rounded-lg border border-kiwi bg-surface2 px-3 py-2 text-xs text-kiwi">
             Clip fully labeled ✓ — export with:&nbsp;
             <code className="select-all font-mono">./venv/bin/python scripts/export_golden.py {clipId} golden/</code>
+          </p>
+        ) : labeled > 0 && (
+          <p className="mt-2 text-[11px] text-muted">
+            Export:&nbsp;
+            <code className="select-all font-mono text-text3">./venv/bin/python scripts/export_golden.py {clipId} golden/</code>
+            &nbsp;— append a cutoff in seconds to export a partially-labeled clip (e.g. tracking switches subjects mid-clip).
           </p>
         )}
       </div>
