@@ -7,15 +7,17 @@ import CanvasPlayer from '../components/CanvasPlayer'
 
 // Pluggable taxonomy — a future defense pass adds an entry here, not a new page.
 // Keys must match backend VALID_STRIKE_TYPES (routers/clips.py).
+// Kicks are labeled by axis (lead/rear), matching jab/cross for punches — the
+// classifier's roundhouse/rear split is normalized to rear_kick at eval time.
 const TAXONOMIES = {
   strike: {
     typeKeys: [
       { key: '1', type: 'jab' },
       { key: '2', type: 'cross' },
       { key: '3', type: 'hook' },
-      { key: '4', type: 'lead_kick' },
-      { key: '5', type: 'rear_kick' },
-      { key: '6', type: 'roundhouse_kick' },
+      { key: '4', type: 'uppercut' },
+      { key: '5', type: 'lead_kick' },
+      { key: '6', type: 'rear_kick' },
       { key: '7', type: 'kick' },
     ],
   },

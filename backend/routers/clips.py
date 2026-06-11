@@ -257,7 +257,11 @@ class StrikeLabelRequest(BaseModel):
 
 
 VALID_STRIKE_LABELS = {"correct", "wrong_type", "not_a_strike", "missed"}
-VALID_STRIKE_TYPES = {"jab", "cross", "hook", "rear_kick", "roundhouse_kick", "lead_kick", "kick"}
+# Ground-truth labels use the axis taxonomy for kicks (lead/rear), matching how
+# jab/cross encodes axis for punches. "roundhouse_kick" stays valid only for
+# backwards compatibility with the classifier's current naming — golden_eval
+# normalizes it to rear_kick when scoring.
+VALID_STRIKE_TYPES = {"jab", "cross", "hook", "uppercut", "rear_kick", "roundhouse_kick", "lead_kick", "kick"}
 
 
 @router.post("/{clip_id}/strike-labels", status_code=status.HTTP_201_CREATED)
