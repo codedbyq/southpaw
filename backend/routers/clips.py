@@ -263,7 +263,8 @@ VALID_STRIKE_LABELS = {"correct", "wrong_type", "not_a_strike", "missed"}
 # normalizes it to rear_kick when scoring.
 VALID_STRIKE_TYPES = {
     "jab", "cross", "hook", "uppercut",
-    "lead_kick", "rear_kick", "kick",  # kick = axis unclear (e.g. switch kick)
+    "lead_kick", "rear_kick", "kick",  # axis = which of the fighter's legs (stance-relative,
+                                       # unaffected by temporary switches); kick = axis unjudgeable
     "knee", "elbow",                   # not detectable yet — labels measure the recall gap
     "roundhouse_kick",
 }

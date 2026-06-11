@@ -18,7 +18,9 @@ const TAXONOMIES = {
       { key: '4', type: 'uppercut' },
       { key: '5', type: 'lead_kick' },
       { key: '6', type: 'rear_kick' },
-      { key: '7', type: 'kick' },     // axis unclear — e.g. switch kick
+      { key: '7', type: 'kick' },     // axis unjudgeable (unknown stance footage); switch kicks
+                                      // are lead_kick — axis = the fighter's leg, not the slot
+                                      // it fired from mid-switch
       { key: '8', type: 'knee' },
       { key: '9', type: 'elbow' },
     ],
