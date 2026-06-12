@@ -201,6 +201,9 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
                 frame_rate=int(round(effective_fps)),
             )
 
+            APPEARANCE_SAMPLE_EVERY_S = 0.7
+            APPEARANCE_MAX_CROPS = 2400
+            appearance_crops, last_crop_t = [], {}
             frames_data = []
             luma_samples = []
             frame_index = 0
@@ -264,6 +267,26 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
                         ]
                         skeletons.append({"id": tracker_id, "keypoints": keypoints})
 
+                        # Appearance crop sampling for track repair — frames are
+                        # already decoded here, so identity costs no second pass.
+                        # Crops/embeddings are transient (D2/D3): discarded after
+                        # repair, never persisted.
+                        if timestamp - last_crop_t.get(tracker_id, -9.0) >= APPEARANCE_SAMPLE_EVERY_S \
+                                and len(appearance_crops) < APPEARANCE_MAX_CROPS:
+                            vis = kps[conf > 0.3]
+                            if len(vis) >= 8:
+                                x0, y0 = vis.min(axis=0)
+                                x1, y1 = vis.max(axis=0)
+                                mx, my = 0.07 * (x1 - x0), 0.07 * (y1 - y0)
+                                a, b = max(0, int(x0 - mx)), min(w, int(x1 + mx))
+                                c, d = max(0, int(y0 - my)), min(h, int(y1 + my))
+                                if b - a >= 24 and d - c >= 48:
+                                    crop = cv2.cvtColor(frame[c:d, a:b], cv2.COLOR_BGR2RGB)
+                                    appearance_crops.append(
+                                        (tracker_id, timestamp, cv2.resize(crop, (128, 256)))
+                                    )
+                                    last_crop_t[tracker_id] = timestamp
+
                 frames_data.append({
                     "frame": frame_index,
                     "timestamp": round(timestamp, 4),
@@ -288,6 +311,30 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
             if not any(f["skeletons"] for f in frames_data):
                 raise PipelineError("no_person", "No people were detected in this video — check framing and lighting")
 
+            # Track repair: embed the sampled crops (GPU), split identity
+            # drifts, stitch fragmented tracklets with appearance
+            # adjudication — BEFORE anything downstream reads subject ids.
+            # Crops and embeddings are discarded after this block (D2/D3);
+            # only the id-mapping report persists.
+            from services.appearance import Embedder, AppearanceIndex
+            from services.track_repair import apply_repair, REPAIR_VERSION
+
+            repair_report = {"version": REPAIR_VERSION, "merges": [], "splits": {}}
+            try:
+                index = AppearanceIndex()
+                embedder = Embedder()
+                for i in range(0, len(appearance_crops), 64):
+                    batch = appearance_crops[i:i + 64]
+                    for (tid, t, _), emb in zip(batch, embedder.embed_batch([c for _, _, c in batch])):
+                        index.add(tid, t, emb)
+                repair_report = apply_repair(frames_data, appearance=index, strict=True)
+            except Exception as repair_err:
+                logger.warning(f"Track repair failed (non-fatal, raw tracks kept): {repair_err}")
+            finally:
+                appearance_crops = None
+            stage_timings["track_repair"] = round(time.monotonic() - stage_start, 2)
+            stage_start = time.monotonic()
+
             # Thumbnail extraction (non-fatal)
             try:
                 thumb_key = _extract_and_upload_thumbnail(
@@ -307,7 +354,7 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
                 classify_clip, RULES_VERSION, MIN_PERSISTED_CONFIDENCE,
             )
 
-            pipeline_version = f"v3:{model_name}:{RULES_VERSION}"
+            pipeline_version = f"v3:{model_name}:{RULES_VERSION}+{REPAIR_VERSION}"
 
             # Classification post-pass: per-subject stance first (jab/cross
             # naming is stance-dependent), then time-based, torso-normalized
@@ -372,6 +419,7 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
                     "subject_confidence": subject_confidence,
                     "pose_quality": {"score": pose_quality_score, **quality_components},
                     "subjects": subject_summaries(frames_data),
+                    "track_repair": repair_report,
                     "frames": frames_data,
                 }),
                 ContentType="application/json",

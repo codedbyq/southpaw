@@ -153,5 +153,20 @@ flip rather than a cold start — *gated on consent (D3), athlete-only (D2)*.
 
 ## 8. Iteration log
 
+- **2026-06-12** — **Track repair shipped** (ReID block, PR #58). Within-clip identity is
+  now repaired before classification: appearance-adjudicated tracklet stitching +
+  drift splitting (`services/track_repair.py` + `services/appearance.py`), with crops
+  embedded in-loop on the T4 (transient per D2/D3 — only the id-map report persists).
+  Measured along the way: pose geometry cannot adjudicate identity (limb proportions
+  shift 0.064 across a known swap vs 0.30 noise; scale changepoints swamped by depth
+  motion); tracker swaps don't help (D11 partial answer: native bt/botsort fragment
+  *honestly* where supervision-ByteTrack contaminates *silently*, botsort+reid worst
+  of all — migration buys nothing without our own appearance layer, which we now have);
+  vanilla ResNet18 separates same/different person at 0.04 vs 0.10 cosine distance.
+  Acceptance: known swap splits at 68.0s (truth 67.7) and both timelines reassemble;
+  verified handoff still merges; clean clips byte-identical. Tracking eval:
+  `scripts/eval_tracking.py` + interval-truth format in `golden/regression/tracking/`.
+  Next phase: athlete gallery (cross-clip memory) on this foundation, consent-gated.
+
 - **2026-06-07** — Initial draft. Captures shipped subject-selection pipeline, the
   near-term color-coded selector plan, the ReID vision, and decisions D1–D11.
