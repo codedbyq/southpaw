@@ -23,6 +23,8 @@ const TAXONOMIES = {
                                       // it fired from mid-switch
       { key: '8', type: 'knee' },
       { key: '9', type: 'elbow' },
+      { key: '0', type: 'check' },    // defense, not a strike — kept out of strike truth at
+                                      // export; distinguishes check-FPs from footwork-FPs
     ],
   },
 }

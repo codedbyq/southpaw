@@ -106,17 +106,31 @@ async def export(clip_id: str, golden_dir: Path, until: float | None = None) -> 
     dup_count = len(missed) - len(deduped)
     missed = deduped
 
+    # Defensive actions (e.g. checks) are real motion but not strikes: they are
+    # excluded from strike ground truth — a detection there is a true false
+    # positive — and recorded separately so FP analysis can tell check-shaped
+    # FPs from footwork FPs.
+    DEFENSE_TYPES = {"check"}
+
     true_strikes = []
+    defensive_actions = []
     for s in strikes:
         v = verdicts[s.id]
         if v.label == "correct":
             true_strikes.append({"timestamp_seconds": s.timestamp_seconds, "type": s.type})
         elif v.label == "wrong_type":
-            true_strikes.append({"timestamp_seconds": s.timestamp_seconds, "type": v.corrected_type})
+            if v.corrected_type in DEFENSE_TYPES:
+                defensive_actions.append({"timestamp_seconds": s.timestamp_seconds, "type": v.corrected_type})
+            else:
+                true_strikes.append({"timestamp_seconds": s.timestamp_seconds, "type": v.corrected_type})
         # not_a_strike -> dropped
     for r in missed:
-        true_strikes.append({"timestamp_seconds": r.timestamp_seconds, "type": r.corrected_type})
+        if r.corrected_type in DEFENSE_TYPES:
+            defensive_actions.append({"timestamp_seconds": r.timestamp_seconds, "type": r.corrected_type})
+        else:
+            true_strikes.append({"timestamp_seconds": r.timestamp_seconds, "type": r.corrected_type})
     true_strikes.sort(key=lambda x: x["timestamp_seconds"])
+    defensive_actions.sort(key=lambda x: x["timestamp_seconds"])
 
     # Final pass: a missed-mark stacked on a detection verdict (same type
     # within 0.15s) is one strike, not two — nobody lands two same-type
@@ -145,10 +159,14 @@ async def export(clip_id: str, golden_dir: Path, until: float | None = None) -> 
     (golden_dir / f"{name}.keypoints.json").write_bytes(keypoints)
 
     labels = {"strikes": true_strikes}
+    if defensive_actions:
+        labels["defensive_actions"] = defensive_actions
     if clip.selected_subject_id is not None:
         labels["subject_id"] = clip.selected_subject_id
-    if clip.stance and clip.stance != "unknown":
-        labels["stance"] = clip.stance
+    # Deliberately NOT stamping clip.stance: that's detect_stance output, i.e.
+    # the pipeline grading its own homework — it baked the orthodox/southpaw
+    # bug into the eval. The eval re-detects stance from keypoints; add a
+    # hand-verified "stance" to labels.json manually if needed.
     if clip.clip_type:
         labels["clip_type"] = clip.clip_type
     (golden_dir / f"{name}.labels.json").write_text(json.dumps(labels, indent=2))
@@ -158,7 +176,8 @@ async def export(clip_id: str, golden_dir: Path, until: float | None = None) -> 
     print(
         f"Exported {name}: {len(strikes)} detections -> {len(true_strikes)} true strikes "
         f"({dropped} dropped, {corrected} type-corrected, {len(missed)} missed added"
-        + (f", {dup_count} duplicate missed-marks ignored" if dup_count else "") + ")"
+        + (f", {dup_count} duplicate missed-marks ignored" if dup_count else "")
+        + (f", {len(defensive_actions)} defensive actions recorded" if defensive_actions else "") + ")"
     )
 
 

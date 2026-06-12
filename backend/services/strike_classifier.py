@@ -30,7 +30,9 @@ import math
 
 # Version stamp for this rules implementation. Bump on any behavioral change;
 # combined with the YOLO model name into clips.pipeline_version.
-RULES_VERSION = "rules-2"
+# rules-3: facing-aware stance detection (clip_metrics.detect_stance) — fixes
+# inverted jab/cross + lead/rear kick naming for fighters facing right.
+RULES_VERSION = "rules-3"
 
 MIN_KEYPOINT_CONF = 0.3
 SMOOTHING_ALPHA = 0.5            # EMA over keypoint positions before kinematics

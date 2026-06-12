@@ -270,6 +270,9 @@ VALID_STRIKE_TYPES = {
     "lead_kick", "rear_kick", "kick",  # axis = which of the fighter's legs (stance-relative,
                                        # unaffected by temporary switches); kick = axis unjudgeable
     "knee", "elbow",                   # not detectable yet — labels measure the recall gap
+    "check",                           # defensive action, NOT a strike — excluded from strike
+                                       # ground truth at export; recorded for FP analysis and
+                                       # the future defense taxonomy
     "roundhouse_kick",
 }
 
