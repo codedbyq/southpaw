@@ -407,6 +407,7 @@ def classify_subject_strikes(frames, subject_id, stance="unknown", clip_type=Non
                 "peak_extension": round(peak_ext, 3) if peak_ext is not None else None,
                 "torso_length": round(torso, 4),
                 "stance_known": stance_known,
+                "side_left": is_left,
             },
         }
         strikes.append(strike)

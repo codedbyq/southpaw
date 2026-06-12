@@ -63,6 +63,8 @@ def main(out_path: Path):
                     "clip": name, "tier": tier,
                     "clip_type": spec.get("clip_type"), "stance": stance,
                     "pred_type": p["type"], "confidence": p.get("confidence"),
+                    "side_left": p.get("debug", {}).get("side_left"),
+                    "shape_wx_ex": None,  # single-frame hook feature lives in naming; turn/straightness replace it
                     "tp": l is not None,
                     "true_type": l["type"] if l else None,
                     **{f"f.{k}": v for k, v in _flatten(feats).items()
