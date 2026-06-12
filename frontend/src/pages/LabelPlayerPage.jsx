@@ -14,16 +14,20 @@ const TAXONOMIES = {
     typeKeys: [
       { key: '1', type: 'jab' },
       { key: '2', type: 'cross' },
-      { key: '3', type: 'hook' },
-      { key: '4', type: 'uppercut' },
+      { key: '3', type: 'lead_hook' },
+      { key: '4', type: 'rear_hook' },
       { key: '5', type: 'lead_kick' },
       { key: '6', type: 'rear_kick' },
-      { key: '7', type: 'kick' },     // axis unjudgeable (unknown stance footage); switch kicks
-                                      // are lead_kick — axis = the fighter's leg, not the slot
-                                      // it fired from mid-switch
-      { key: '8', type: 'knee' },
-      { key: '9', type: 'elbow' },
-      { key: '0', type: 'check' },    // defense, not a strike — kept out of strike truth at
+      { key: '7', type: 'lead_uppercut' },
+      { key: '8', type: 'rear_uppercut' },
+      { key: '9', type: 'knee' },
+      { key: '0', type: 'elbow' },
+      // generics = axis unjudgeable (e.g. unknown-stance footage, mid-switch);
+      // axis = the fighter's limb, not the slot it fired from
+      { key: 'g', type: 'kick' },
+      { key: 'h', type: 'hook' },
+      { key: 'u', type: 'uppercut' },
+      { key: 'c', type: 'check' },    // defense, not a strike — kept out of strike truth at
                                       // export; distinguishes check-FPs from footwork-FPs
     ],
   },

@@ -12,6 +12,10 @@ const STRIKE_COLORS = {
   jab:             '#ccff00',
   cross:           '#dfff00',
   hook:            '#88ff00',
+  lead_hook:       '#88ff00',
+  rear_hook:       '#66ee00',
+  lead_uppercut:   '#aaff44',
+  rear_uppercut:   '#99ff22',
   roundhouse_kick: '#ff6b00',
   rear_kick:       '#ff9500',
 }

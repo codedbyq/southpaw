@@ -39,7 +39,8 @@ def _limb_for(strike_type, subject_id_is_left_lead, strike):
         if is_kick:
             side_left = (strike_type == "lead_kick") == subject_id_is_left_lead
         else:
-            side_left = (strike_type == "jab") == subject_id_is_left_lead
+            is_lead = strike_type in ("jab",) or strike_type.startswith("lead_")
+            side_left = is_lead == subject_id_is_left_lead
     if is_kick:
         return (LEFT_LEG if side_left else RIGHT_LEG), True
     return (LEFT_ARM if side_left else RIGHT_ARM), False
