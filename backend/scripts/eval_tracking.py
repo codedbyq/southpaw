@@ -106,9 +106,19 @@ def truth_metrics(frames, truth):
     }
 
 
+def _report(frames, label):
+    m = structural_metrics(frames)
+    if m is None:
+        return
+    print(f"  [{label}] {m['subjects_total']} ids ({m['subjects_meaningful']} meaningful) · "
+          f"{m['tracklets_per_min']}/min · mean lifespan {m['mean_tracklet_s']}s · "
+          f"largest {m['largest_subject']} covers {m['largest_coverage']:.0%}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--core", action="store_true", help="also report core clips (pass-through baseline)")
+    ap.add_argument("--repair", action="store_true", help="apply track repair and report before/after")
     args = ap.parse_args()
 
     targets = sorted(FIXTURES.glob("*.keypoints.json"))
@@ -118,19 +128,22 @@ def main():
     for kp_path in targets:
         name = kp_path.name.replace(".keypoints.json", "")
         frames = json.loads(kp_path.read_text())["frames"]
-        m = structural_metrics(frames)
-        if m is None:
-            continue
         tier = "FIXTURE" if kp_path.parent == FIXTURES else "core"
-        print(f"\n[{tier}] {name}")
-        print(f"  {m['duration_s']}s · {m['subjects_total']} ids ({m['subjects_meaningful']} meaningful) · "
-              f"{m['tracklets_per_min']}/min · mean lifespan {m['mean_tracklet_s']}s · "
-              f"births {m['id_births_per_10s']}/10s")
-        print(f"  largest subject {m['largest_subject']} covers {m['largest_coverage']:.0%} of frames")
+        print(f"\n[{tier}] {name} ({frames[-1].get('timestamp', 0) - frames[0].get('timestamp', 0):.0f}s)")
+        _report(frames, "raw   ")
         truth_path = kp_path.with_name(f"{name}.truth.json")
-        if truth_path.exists():
-            tm = truth_metrics(frames, json.loads(truth_path.read_text()))
-            print(f"  TRUTH: {tm}")
+        truth = json.loads(truth_path.read_text()) if truth_path.exists() else None
+        if truth:
+            print(f"  [raw   ] TRUTH: {truth_metrics(frames, truth)}")
+
+        if args.repair:
+            from services.track_repair import apply_repair
+            rep = apply_repair(frames)
+            _report(frames, "repair")
+            if truth:
+                print(f"  [repair] TRUTH: {truth_metrics(frames, truth)}")
+            if rep["merges"]:
+                print(f"  merged {len(rep['merges'])} pairs -> {rep['tracklets_after']} tracks")
 
 
 if __name__ == "__main__":
