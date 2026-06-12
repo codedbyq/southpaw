@@ -7,16 +7,24 @@ import CanvasPlayer from '../components/CanvasPlayer'
 
 // Pluggable taxonomy — a future defense pass adds an entry here, not a new page.
 // Keys must match backend VALID_STRIKE_TYPES (routers/clips.py).
+// Kicks are labeled by axis (lead/rear), matching jab/cross for punches — the
+// classifier's roundhouse/rear split is normalized to rear_kick at eval time.
 const TAXONOMIES = {
   strike: {
     typeKeys: [
       { key: '1', type: 'jab' },
       { key: '2', type: 'cross' },
       { key: '3', type: 'hook' },
-      { key: '4', type: 'lead_kick' },
-      { key: '5', type: 'rear_kick' },
-      { key: '6', type: 'roundhouse_kick' },
-      { key: '7', type: 'kick' },
+      { key: '4', type: 'uppercut' },
+      { key: '5', type: 'lead_kick' },
+      { key: '6', type: 'rear_kick' },
+      { key: '7', type: 'kick' },     // axis unjudgeable (unknown stance footage); switch kicks
+                                      // are lead_kick — axis = the fighter's leg, not the slot
+                                      // it fired from mid-switch
+      { key: '8', type: 'knee' },
+      { key: '9', type: 'elbow' },
+      { key: '0', type: 'check' },    // defense, not a strike — kept out of strike truth at
+                                      // export; distinguishes check-FPs from footwork-FPs
     ],
   },
 }
@@ -119,16 +127,27 @@ export default function LabelPlayerPage() {
 
   async function addMissed(type) {
     const t = playerRef.current?.getCurrentTime() ?? 0
-    setMissed(prev => [...prev, { timestamp_seconds: t, corrected_type: type }])
     setMissedArm(false)
     try {
-      await api.post(`/clips/${clipId}/strike-labels`, {
+      const res = await api.post(`/clips/${clipId}/strike-labels`, {
         label: 'missed',
         corrected_type: type,
         timestamp_seconds: t,
       })
-    } catch {
-      setMissed(prev => prev.slice(0, -1))
+      setMissed(prev => [...prev, { id: res.id, timestamp_seconds: t, corrected_type: type }]
+        .sort((a, b) => a.timestamp_seconds - b.timestamp_seconds))
+    } catch (err) {
+      console.error('Failed to record missed strike', err)
+    }
+  }
+
+  async function removeMissed(mark) {
+    setMissed(prev => prev.filter(m => m.id !== mark.id))
+    try {
+      await api.delete(`/clips/${clipId}/strike-labels/${mark.id}`)
+    } catch (err) {
+      console.error('Failed to remove missed strike', err)
+      setMissed(prev => [...prev, mark].sort((a, b) => a.timestamp_seconds - b.timestamp_seconds))
     }
   }
 
@@ -193,7 +212,23 @@ export default function LabelPlayerPage() {
           ← Label queue
         </button>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="font-display text-xl font-black tracking-tight text-text">{clip.filename}</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="font-display text-xl font-black tracking-tight text-text">{clip.filename}</h1>
+            <select
+              value={clip.clip_type || ''}
+              onChange={async e => {
+                const clip_type = e.target.value
+                setClip(prev => ({ ...prev, clip_type }))
+                try { await api.patch(`/clips/${clipId}`, { clip_type }) }
+                catch (err) { console.error('Failed to update clip type', err) }
+              }}
+              className="rounded-lg border border-line bg-surface2 px-2 py-1 text-xs text-text3"
+              title="Clip type — affects classifier thresholds (shadow) and eval context; fix it if the session default was wrong"
+            >
+              <option value="" disabled>type?</option>
+              {['bag', 'sparring', 'shadow', 'pads', 'strength'].map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
           <div className="flex items-center gap-3">
             {missedArm && <span className="animate-pulse text-xs font-bold uppercase tracking-wide text-warning">press a type key to mark missed strike — esc cancels</span>}
             <span className={`font-display text-base font-extrabold tabular-nums ${done ? 'text-kiwi' : 'text-text'}`}>
@@ -201,10 +236,16 @@ export default function LabelPlayerPage() {
             </span>
           </div>
         </div>
-        {done && (
+        {done ? (
           <p className="mt-2 rounded-lg border border-kiwi bg-surface2 px-3 py-2 text-xs text-kiwi">
             Clip fully labeled ✓ — export with:&nbsp;
             <code className="select-all font-mono">./venv/bin/python scripts/export_golden.py {clipId} golden/</code>
+          </p>
+        ) : labeled > 0 && (
+          <p className="mt-2 text-[11px] text-muted">
+            Export:&nbsp;
+            <code className="select-all font-mono text-text3">./venv/bin/python scripts/export_golden.py {clipId} golden/</code>
+            &nbsp;— append a cutoff in seconds to export a partially-labeled clip (e.g. tracking switches subjects mid-clip).
           </p>
         )}
       </div>
@@ -251,6 +292,33 @@ export default function LabelPlayerPage() {
             })}
             {strikes.length === 0 && <p className="p-2 text-sm text-muted">No detections on this clip.</p>}
           </div>
+          {missed.length > 0 && (
+            <div className="border-t border-line p-3">
+              <p className="mb-1.5 px-2.5 text-[10px] font-bold uppercase tracking-wider text-muted">
+                Missed strikes you added ({missed.length})
+              </p>
+              {missed.map(m => (
+                <div key={m.id || m.timestamp_seconds} className="group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 hover:bg-surface2">
+                  <button
+                    onClick={() => { setLooping(false); playerRef.current?.pause(); playerRef.current?.seekTo(m.timestamp_seconds) }}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                  >
+                    <span className="w-10 flex-shrink-0 font-mono text-[11px] tabular-nums text-muted">{m.timestamp_seconds.toFixed(1)}s</span>
+                    <span className="truncate text-[13px] capitalize text-warning">+ {m.corrected_type?.replace('_', ' ')}</span>
+                  </button>
+                  {m.id && (
+                    <button
+                      onClick={() => removeMissed(m)}
+                      className="flex-shrink-0 px-1 font-display text-base font-bold text-muted transition-colors hover:text-danger"
+                      title="Remove this mark"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {current && (
             <div className="border-t border-line p-3 text-[11px] text-muted">
               Reviewing #{idx + 1}: <span className="capitalize text-text">{current.type.replace('_', ' ')}</span> at {current.timestamp_seconds.toFixed(2)}s

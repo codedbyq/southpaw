@@ -43,19 +43,39 @@ def compute_head_movement(frames, subject_id=None):
 
 
 def detect_stance(frames, subject_id=None):
-    """orthodox | southpaw | unknown from lead-ankle position for one subject."""
+    """orthodox | southpaw | unknown — which foot leads, judged along the
+    fighter's facing direction.
+
+    The old heuristic treated image-left as 'forward', which flipped the
+    stance of any fighter facing right in frame (a southpaw facing right was
+    called orthodox, inverting every jab/cross and lead/rear kick). Facing is
+    inferred per frame from the nose's x-offset off the mid-hip; frames where
+    the fighter is squared to camera (offset under a torso-scaled threshold)
+    are skipped as ambiguous."""
     left_forward = 0
     right_forward = 0
     for frame in frames:
         kps = _pick_skeleton(frame, subject_id)
         if not kps or len(kps) < 17:
             continue
-        la, ra = kps[15], kps[16]
-        if la["visibility"] > MIN_KEYPOINT_CONF and ra["visibility"] > MIN_KEYPOINT_CONF:
-            if la["x"] < ra["x"]:
-                left_forward += 1
-            else:
-                right_forward += 1
+        nose, ls, rs, lh, rh, la, ra = kps[0], kps[5], kps[6], kps[11], kps[12], kps[15], kps[16]
+        if any(k["visibility"] <= MIN_KEYPOINT_CONF for k in (nose, ls, rs, lh, rh, la, ra)):
+            continue
+        mid_hip_x = (lh["x"] + rh["x"]) / 2
+        mid_hip_y = (lh["y"] + rh["y"]) / 2
+        mid_sh_x = (ls["x"] + rs["x"]) / 2
+        mid_sh_y = (ls["y"] + rs["y"]) / 2
+        torso = ((mid_sh_x - mid_hip_x) ** 2 + (mid_sh_y - mid_hip_y) ** 2) ** 0.5
+        if torso <= 0:
+            continue
+        facing = nose["x"] - mid_hip_x
+        if abs(facing) < 0.15 * torso:
+            continue  # squared to camera — lead foot is ambiguous
+        # the lead foot is further along the facing direction
+        if (la["x"] - ra["x"]) * facing > 0:
+            left_forward += 1
+        else:
+            right_forward += 1
     total = left_forward + right_forward
     if total < 30:
         return "unknown"

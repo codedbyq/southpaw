@@ -57,10 +57,14 @@ class ClipResponse(BaseModel):
         from_attributes = True
 
 
+VALID_CLIP_TYPES = {"bag", "sparring", "shadow", "pads", "strength"}
+
+
 class ClipUpdateRequest(BaseModel):
     filename: str | None = None
     notes: str | None = None
     session_id: str | None = None  # uuid string to move to session, empty string to unorganize
+    clip_type: str | None = None   # corrects the type inherited from the session at upload
 
 # --- Routes ---
 
@@ -257,7 +261,20 @@ class StrikeLabelRequest(BaseModel):
 
 
 VALID_STRIKE_LABELS = {"correct", "wrong_type", "not_a_strike", "missed"}
-VALID_STRIKE_TYPES = {"jab", "cross", "hook", "rear_kick", "roundhouse_kick", "lead_kick", "kick"}
+# Ground-truth labels use the axis taxonomy for kicks (lead/rear), matching how
+# jab/cross encodes axis for punches. "roundhouse_kick" stays valid only for
+# backwards compatibility with the classifier's current naming — golden_eval
+# normalizes it to rear_kick when scoring.
+VALID_STRIKE_TYPES = {
+    "jab", "cross", "hook", "uppercut",
+    "lead_kick", "rear_kick", "kick",  # axis = which of the fighter's legs (stance-relative,
+                                       # unaffected by temporary switches); kick = axis unjudgeable
+    "knee", "elbow",                   # not detectable yet — labels measure the recall gap
+    "check",                           # defensive action, NOT a strike — excluded from strike
+                                       # ground truth at export; recorded for FP analysis and
+                                       # the future defense taxonomy
+    "roundhouse_kick",
+}
 
 
 @router.post("/{clip_id}/strike-labels", status_code=status.HTTP_201_CREATED)
@@ -309,6 +326,32 @@ async def create_strike_label(
     db.add(row)
     await db.commit()
     return {"id": str(row.id), "label": row.label}
+
+
+@router.delete("/{clip_id}/strike-labels/{label_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_strike_label(
+    clip_id: uuid.UUID,
+    label_id: uuid.UUID,
+    clerk_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a missed-strike mark (accidental/duplicate presses in the
+    labeling tool). Restricted to 'missed' rows — detection verdicts are
+    corrected by re-labeling (latest wins), and their history stays."""
+    from models.strike_label import StrikeLabel
+
+    clip = await _get_clip_for_user(clip_id, clerk_user_id, db)
+    row = (await db.execute(
+        select(StrikeLabel).where(
+            StrikeLabel.id == label_id,
+            StrikeLabel.clip_id == clip.id,
+            StrikeLabel.label == "missed",
+        )
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Missed-strike label not found on this clip")
+    await db.delete(row)
+    await db.commit()
 
 
 @router.delete("/{clip_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -506,6 +549,10 @@ async def update_clip(
         clip.filename = body.filename.strip()
     if body.notes is not None:
         clip.notes = body.notes.strip() or None
+    if body.clip_type is not None:
+        if body.clip_type not in VALID_CLIP_TYPES:
+            raise HTTPException(status_code=422, detail=f"clip_type must be one of {sorted(VALID_CLIP_TYPES)}")
+        clip.clip_type = body.clip_type
 
     if body.session_id is not None:
         old_session_id = clip.session_id

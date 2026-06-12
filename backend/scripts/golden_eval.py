@@ -38,6 +38,23 @@ from services.clip_metrics import detect_stance, score_subjects
 
 MATCH_TOLERANCE_SECONDS = 0.5
 
+# Score on the coarser axis taxonomy: the classifier splits rear-leg kicks into
+# roundhouse/rear on a >20° hip-rotation threshold we don't trust yet, while
+# hand labels use lead/rear only. Applied to predictions AND labels.
+TYPE_ALIASES = {"roundhouse_kick": "rear_kick"}
+
+
+def _norm_type(t):
+    return TYPE_ALIASES.get(t, t)
+
+
+def _type_match(pred_type, label_type):
+    """A generic 'kick' label (axis unclear on video, e.g. switch kicks)
+    accepts any kick-family prediction."""
+    if label_type == "kick":
+        return pred_type == "kick" or pred_type.endswith("_kick")
+    return pred_type == label_type
+
 
 def match(predictions, labels):
     """Greedy nearest-first matching within tolerance.
@@ -76,8 +93,10 @@ def evaluate_case(kp_path: Path, label_path: Path, include_low_confidence: bool)
     preds = classify_subject_strikes(frames, subject_id, stance, spec.get("clip_type"))
     if not include_low_confidence:
         preds = [p for p in preds if not p.get("low_confidence")]
+    for p in preds:
+        p["type"] = _norm_type(p["type"])
 
-    labels = spec["strikes"]
+    labels = [{**l, "type": _norm_type(l["type"])} for l in spec["strikes"]]
     pairs, false_pos, false_neg = match(preds, labels)
     return preds, labels, pairs, false_pos, false_neg
 
@@ -116,9 +135,9 @@ def main():
             total_fn += len(false_neg)
             count_errors.append(abs(len(preds) - len(labels)))
 
-            type_correct = sum(1 for p, l in pairs if p["type"] == l["type"])
+            type_correct = sum(1 for p, l in pairs if _type_match(p["type"], l["type"]))
             for p, l in pairs:
-                if p["type"] == l["type"]:
+                if _type_match(p["type"], l["type"]):
                     per_class[l["type"]]["tp"] += 1
                 else:
                     per_class[p["type"]]["fp"] += 1

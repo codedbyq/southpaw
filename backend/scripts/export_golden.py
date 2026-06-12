@@ -12,7 +12,12 @@ Verdict -> ground truth:
     not_a_strike -> drop
     missed       -> insert at the hand-marked timestamp with corrected_type
 
-Usage:  cd backend && ./venv/bin/python scripts/export_golden.py <clip_id> <golden_dir>
+Usage:  cd backend && ./venv/bin/python scripts/export_golden.py <clip_id> <golden_dir> [until_seconds]
+
+until_seconds truncates the export at a timestamp — for clips where tracking
+fails partway (subject swaps to the pad holder / sparring partner), label the
+clean prefix only and export with the cutoff; the contaminated tail needs no
+labels. Frames, detections, and marks past the cutoff are all dropped.
 """
 
 import asyncio
@@ -37,7 +42,12 @@ from models.strike import Strike
 from models.strike_label import StrikeLabel
 
 
-async def export(clip_id: str, golden_dir: Path) -> None:
+async def export(clip_id: str, golden_dir: Path, until: float | None = None) -> None:
+    """until: truncate the export at this timestamp (seconds). For clips where
+    tracking fails partway (e.g. the subject swaps to the pad holder), the
+    clean prefix is still valid ground truth — frames, detections, and labels
+    past the cutoff are all dropped, keeping the golden pair internally
+    consistent."""
     eng = create_async_engine(os.environ["DATABASE_URL"])
     Session = async_sessionmaker(eng, expire_on_commit=False)
     async with Session() as db:
@@ -60,6 +70,11 @@ async def export(clip_id: str, golden_dir: Path) -> None:
         )).scalars().all()
     await eng.dispose()
 
+    if until is not None:
+        strikes = [s for s in strikes if s.timestamp_seconds < until]
+        label_rows = [r for r in label_rows
+                      if r.timestamp_seconds is None or r.timestamp_seconds < until]
+
     # Latest verdict per strike wins; collect missed marks
     verdicts: dict = {}
     missed = []
@@ -78,17 +93,56 @@ async def export(clip_id: str, golden_dir: Path) -> None:
             "Label every detection in /label/<clip_id> first."
         )
 
+    # Defensive dedupe: repeated 'm' presses on the same moment create
+    # duplicate marks; two identical true strikes would charge the classifier
+    # a phantom false negative.
+    missed.sort(key=lambda r: r.timestamp_seconds)
+    deduped = []
+    for r in missed:
+        if deduped and r.corrected_type == deduped[-1].corrected_type \
+                and r.timestamp_seconds - deduped[-1].timestamp_seconds < 0.3:
+            continue
+        deduped.append(r)
+    dup_count = len(missed) - len(deduped)
+    missed = deduped
+
+    # Defensive actions (e.g. checks) are real motion but not strikes: they are
+    # excluded from strike ground truth — a detection there is a true false
+    # positive — and recorded separately so FP analysis can tell check-shaped
+    # FPs from footwork FPs.
+    DEFENSE_TYPES = {"check"}
+
     true_strikes = []
+    defensive_actions = []
     for s in strikes:
         v = verdicts[s.id]
         if v.label == "correct":
             true_strikes.append({"timestamp_seconds": s.timestamp_seconds, "type": s.type})
         elif v.label == "wrong_type":
-            true_strikes.append({"timestamp_seconds": s.timestamp_seconds, "type": v.corrected_type})
+            if v.corrected_type in DEFENSE_TYPES:
+                defensive_actions.append({"timestamp_seconds": s.timestamp_seconds, "type": v.corrected_type})
+            else:
+                true_strikes.append({"timestamp_seconds": s.timestamp_seconds, "type": v.corrected_type})
         # not_a_strike -> dropped
     for r in missed:
-        true_strikes.append({"timestamp_seconds": r.timestamp_seconds, "type": r.corrected_type})
+        if r.corrected_type in DEFENSE_TYPES:
+            defensive_actions.append({"timestamp_seconds": r.timestamp_seconds, "type": r.corrected_type})
+        else:
+            true_strikes.append({"timestamp_seconds": r.timestamp_seconds, "type": r.corrected_type})
     true_strikes.sort(key=lambda x: x["timestamp_seconds"])
+    defensive_actions.sort(key=lambda x: x["timestamp_seconds"])
+
+    # Final pass: a missed-mark stacked on a detection verdict (same type
+    # within 0.15s) is one strike, not two — nobody lands two same-type
+    # strikes that close (the classifier's own cooldown is 0.2s).
+    final = []
+    for s in true_strikes:
+        if final and s["type"] == final[-1]["type"] \
+                and s["timestamp_seconds"] - final[-1]["timestamp_seconds"] < 0.15:
+            dup_count += 1
+            continue
+        final.append(s)
+    true_strikes = final
 
     s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
     obj = s3.get_object(Bucket=os.environ["S3_BUCKET_NAME"], Key=job.result_s3_key)
@@ -96,13 +150,23 @@ async def export(clip_id: str, golden_dir: Path) -> None:
 
     golden_dir.mkdir(parents=True, exist_ok=True)
     name = f"{clip.filename.rsplit('.', 1)[0]}-{str(clip.id)[:8]}"
+    if until is not None:
+        name += f"-first{int(until)}s"
+        kp = json.loads(keypoints)
+        kp["frames"] = [f for f in kp["frames"] if f.get("timestamp", 0.0) < until]
+        kp["truncated_at_seconds"] = until
+        keypoints = json.dumps(kp).encode()
     (golden_dir / f"{name}.keypoints.json").write_bytes(keypoints)
 
     labels = {"strikes": true_strikes}
+    if defensive_actions:
+        labels["defensive_actions"] = defensive_actions
     if clip.selected_subject_id is not None:
         labels["subject_id"] = clip.selected_subject_id
-    if clip.stance and clip.stance != "unknown":
-        labels["stance"] = clip.stance
+    # Deliberately NOT stamping clip.stance: that's detect_stance output, i.e.
+    # the pipeline grading its own homework — it baked the orthodox/southpaw
+    # bug into the eval. The eval re-detects stance from keypoints; add a
+    # hand-verified "stance" to labels.json manually if needed.
     if clip.clip_type:
         labels["clip_type"] = clip.clip_type
     (golden_dir / f"{name}.labels.json").write_text(json.dumps(labels, indent=2))
@@ -111,11 +175,14 @@ async def export(clip_id: str, golden_dir: Path) -> None:
     corrected = sum(1 for s in strikes if verdicts[s.id].label == "wrong_type")
     print(
         f"Exported {name}: {len(strikes)} detections -> {len(true_strikes)} true strikes "
-        f"({dropped} dropped, {corrected} type-corrected, {len(missed)} missed added)"
+        f"({dropped} dropped, {corrected} type-corrected, {len(missed)} missed added"
+        + (f", {dup_count} duplicate missed-marks ignored" if dup_count else "")
+        + (f", {len(defensive_actions)} defensive actions recorded" if defensive_actions else "") + ")"
     )
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         sys.exit(__doc__)
-    asyncio.run(export(sys.argv[1], Path(sys.argv[2])))
+    cutoff = float(sys.argv[3]) if len(sys.argv) == 4 else None
+    asyncio.run(export(sys.argv[1], Path(sys.argv[2]), until=cutoff))
