@@ -1,0 +1,48 @@
+{
+  "policy": "Ratchet rule: a PR that lowers any baseline below its floor or fails a fixture assertion must update this manifest in the same PR with a justification. New failure modes get a fixture entry BEFORE the fix (test-first). Holdout clips are never tuned against — thresholds and models are fitted on core only; holdout is reported for honesty.",
+  "tiers": {
+    "core": "verified strike-truth clips; thresholds/models may be tuned against these",
+    "holdout": "verified strike-truth clips added after rules-4 tuning; report-only, never fit",
+    "regression/tracking": "clips quarantined for tracking/identity failures; not scored for strike metrics until re-ID lands"
+  },
+  "baselines": {
+    "core": {
+      "precision_min": 0.55,
+      "recall_min": 0.88,
+      "f1_min": 0.68,
+      "type_accuracy_min": 0.6
+    }
+  },
+  "fixtures": [
+    {
+      "name": "IMG_0113-03147c0b",
+      "tier": "core",
+      "reproduces": "original 2x over-detection clip: skip-step kick FPs, stride punch FPs (57 detected vs 29 true)",
+      "assert": { "fp_max": 25, "fn_max": 3 }
+    },
+    {
+      "name": "IMG_7678 2-3f6bb182",
+      "tier": "core",
+      "reproduces": "jab/cross flips in two-person clutter (was 13/96 type-correct pre stance fix)",
+      "assert": { "type_accuracy_min": 0.6 }
+    },
+    {
+      "name": "IMG_7678-5f4b7e3f",
+      "tier": "core",
+      "reproduces": "sparring FP volume (was 112 FP pre-gates)",
+      "assert": { "fp_max": 62 }
+    },
+    {
+      "name": "IMG_6336-2ef841d9",
+      "tier": "regression/tracking",
+      "reproduces": "subject identity switches to pad holder at 67.7s; subject_confidence 0.569 correctly flagged it. Clean prefix exported to core as -first67s.",
+      "assert": { "quarantined": true }
+    },
+    {
+      "name": "IMG_0312-b3e179d5-first11s",
+      "tier": "regression/tracking",
+      "reproduces": "tracker fragmentation: 178 ids in 11 seconds; selected subject absent from labeled window",
+      "assert": { "quarantined": true }
+    }
+  ]
+}

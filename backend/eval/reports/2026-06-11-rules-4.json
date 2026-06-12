@@ -1,0 +1,193 @@
+{
+  "date": "2026-06-11",
+  "rules_version": "rules-4",
+  "tiers": {
+    "core": {
+      "clips": {
+        "IMG_0113 2-60206ab5": {
+          "detected": 75,
+          "labeled": 33,
+          "matched": 33,
+          "type_correct": 29,
+          "fp": 42,
+          "fn": 0,
+          "clip_type": "sparring"
+        },
+        "IMG_0113-03147c0b": {
+          "detected": 50,
+          "labeled": 29,
+          "matched": 27,
+          "type_correct": 16,
+          "fp": 23,
+          "fn": 2,
+          "clip_type": "bag"
+        },
+        "IMG_1335-63c5c943": {
+          "detected": 4,
+          "labeled": 10,
+          "matched": 3,
+          "type_correct": 2,
+          "fp": 1,
+          "fn": 7,
+          "clip_type": "shadow"
+        },
+        "IMG_2008-c564886f": {
+          "detected": 3,
+          "labeled": 5,
+          "matched": 2,
+          "type_correct": 0,
+          "fp": 1,
+          "fn": 3,
+          "clip_type": "sparring"
+        },
+        "IMG_6336-2ef841d9-first67s": {
+          "detected": 74,
+          "labeled": 41,
+          "matched": 40,
+          "type_correct": 28,
+          "fp": 34,
+          "fn": 1,
+          "clip_type": "pads"
+        },
+        "IMG_7678 2-3f6bb182": {
+          "detected": 116,
+          "labeled": 99,
+          "matched": 92,
+          "type_correct": 56,
+          "fp": 24,
+          "fn": 7,
+          "clip_type": "bag"
+        },
+        "IMG_7678-5f4b7e3f": {
+          "detected": 108,
+          "labeled": 59,
+          "matched": 52,
+          "type_correct": 28,
+          "fp": 56,
+          "fn": 7,
+          "clip_type": "bag"
+        },
+        "IMG_9881 2-91156165": {
+          "detected": 17,
+          "labeled": 11,
+          "matched": 10,
+          "type_correct": 8,
+          "fp": 7,
+          "fn": 1,
+          "clip_type": "sparring"
+        },
+        "IMG_9883-34ec11f7": {
+          "detected": 38,
+          "labeled": 18,
+          "matched": 18,
+          "type_correct": 10,
+          "fp": 20,
+          "fn": 0,
+          "clip_type": "sparring"
+        }
+      },
+      "per_class": {
+        "cross": {
+          "tp": 32,
+          "fp": 56,
+          "fn": 26,
+          "precision": 0.364,
+          "recall": 0.552,
+          "f1": 0.438
+        },
+        "hook": {
+          "tp": 16,
+          "fp": 73,
+          "fn": 30,
+          "precision": 0.18,
+          "recall": 0.348,
+          "f1": 0.237
+        },
+        "jab": {
+          "tp": 93,
+          "fp": 87,
+          "fn": 40,
+          "precision": 0.517,
+          "recall": 0.699,
+          "f1": 0.594
+        },
+        "knee": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 5,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "lead_kick": {
+          "tp": 9,
+          "fp": 46,
+          "fn": 13,
+          "precision": 0.164,
+          "recall": 0.409,
+          "f1": 0.234
+        },
+        "rear_kick": {
+          "tp": 27,
+          "fp": 46,
+          "fn": 9,
+          "precision": 0.37,
+          "recall": 0.75,
+          "f1": 0.495
+        },
+        "uppercut": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 5,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        }
+      },
+      "per_clip_type": {
+        "bag": {
+          "tp": 171,
+          "fp": 103,
+          "fn": 16,
+          "precision": 0.624,
+          "recall": 0.914,
+          "f1": 0.742
+        },
+        "pads": {
+          "tp": 40,
+          "fp": 34,
+          "fn": 1,
+          "precision": 0.541,
+          "recall": 0.976,
+          "f1": 0.696
+        },
+        "shadow": {
+          "tp": 3,
+          "fp": 1,
+          "fn": 7,
+          "precision": 0.75,
+          "recall": 0.3,
+          "f1": 0.429
+        },
+        "sparring": {
+          "tp": 63,
+          "fp": 70,
+          "fn": 4,
+          "precision": 0.474,
+          "recall": 0.94,
+          "f1": 0.63
+        }
+      },
+      "summary": {
+        "clips": 9,
+        "true_strikes": 305,
+        "precision": 0.571,
+        "recall": 0.908,
+        "f1": 0.701,
+        "type_accuracy": 0.639,
+        "count_mae": 21.8
+      }
+    }
+  },
+  "assertion_failures": []
+}
