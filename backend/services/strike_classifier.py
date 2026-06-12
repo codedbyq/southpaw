@@ -46,6 +46,14 @@ PUNCH_VELOCITY_THRESHOLD = 3.5   # torso-lengths / second
 KICK_VELOCITY_THRESHOLD = 3.0
 SHADOW_THRESHOLD_FACTOR = 0.8    # shadowboxing has no impact deceleration
 
+# Kick false-positive gates, measured at the velocity peak. Tuned on the
+# 10-clip golden corpus (footwork — pivots, advances, skip-steps — fired the
+# kick rule 4x more often than real kicks): real kicks chamber the knee and
+# move much faster than stride noise, and the support foot stays planted.
+KICK_MIN_PEAK_VELOCITY = 4.0       # true-kick median 8.1; footwork FP median 4.9
+KICK_CHAMBER_MAX_BELOW_HIP = 0.8   # knee height vs hip in torso-lengths; FP median 0.79
+KICK_SUPPORT_FOOT_MAX_V = 2.5      # both feet fast = skip/switch-step, not a kick
+
 RETRACTION_WINDOW_SECONDS = 0.6  # extension must fall after its peak within this
 RETRACTION_DROP_RATIO = 0.10     # ...by at least 10% of peak extension
 EXTENSION_PEAK_SEARCH_SECONDS = 0.3
@@ -282,6 +290,20 @@ def classify_subject_strikes(frames, subject_id, stance="unknown", clip_type=Non
             k += 1
         peak = series[peak_i]
         peak_kps = peak["kps"]
+
+        # Kick FP gates (see constants above): vetoed candidates advance one
+        # frame without consuming cooldowns, so a real strike right after a
+        # vetoed stride is still detectable.
+        if kind == "kick":
+            chamber = (peak_kps[mid]["y"] - peak_kps[root]["y"]) / torso
+            other_end = RIGHT_LEG[0] if end == LEFT_LEG[0] else LEFT_LEG[0]
+            jp = _window_start(series, peak_i)
+            v_other = _limb_velocity(series, peak_i, jp, other_end, torso)[0] if jp is not None else 0.0
+            if peak_v < KICK_MIN_PEAK_VELOCITY \
+                    or chamber > KICK_CHAMBER_MAX_BELOW_HIP \
+                    or v_other > KICK_SUPPORT_FOOT_MAX_V:
+                i += 1
+                continue
 
         # Retraction / extension pattern
         curve = _extension_curve(series, peak_i, root, end, torso)
