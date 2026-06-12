@@ -35,7 +35,9 @@ import math
 # rules-4: punch stride veto (wrist-to-body velocity ratio), persistence
 # confidence floor 0.4 -> 0.6.
 # rules-5: hooks named by axis (lead_hook/rear_hook) from striking side + stance.
-RULES_VERSION = "rules-5"
+# rules-6: uppercut candidate class — vertical wrist rises admitted, gated on
+# close-range bent-arm geometry; previously structurally undetectable.
+RULES_VERSION = "rules-6"
 
 MIN_KEYPOINT_CONF = 0.3
 SMOOTHING_ALPHA = 0.5            # EMA over keypoint positions before kinematics
@@ -61,6 +63,20 @@ KICK_SUPPORT_FOOT_MAX_V = 2.5      # both feet fast = skip/switch-step, not a ki
 # body; an arm swinging along with a stride doesn't (corpus: true-punch
 # wrist-to-body ratio median 6.7, phantom median 4.0).
 PUNCH_MIN_WRIST_TO_BODY_RATIO = 2.0
+
+# Uppercut gates. Vertical-dominant wrist rise was structurally excluded by
+# the |dx|>|dy| punch condition, making uppercuts undetectable. Vertical
+# candidates are now admitted but must pass ALL gates at the peak — upward
+# wrist motion is mostly guard resets and face wipes, so the gates encode what
+# only an uppercut does: a fast bent-arm rise finishing at head height, close
+# to the body. Candidates admitted only for vertical motion that fail these
+# gates are discarded, never renamed into other punches.
+UPPERCUT_MAX_LATERAL_OFFSET = 0.45        # |wrist.x − shoulder.x| at peak, torso units
+UPPERCUT_MIN_EXTENSION = 0.30             # below this the wrist is hugging the shoulder —
+                                          # a guard adjustment, not a punch (corpus FPs
+                                          # clustered at 0.05-0.25; the true hit at 0.36)
+UPPERCUT_MAX_EXTENSION = 0.85             # uppercuts land bent, never extended
+UPPERCUT_WRIST_MAX_BELOW_SHOULDER = 0.15  # wrist finishes at/above the shoulder line
 
 RETRACTION_WINDOW_SECONDS = 0.6  # extension must fall after its peak within this
 RETRACTION_DROP_RATIO = 0.10     # ...by at least 10% of peak extension
@@ -264,8 +280,12 @@ def classify_subject_strikes(frames, subject_id, stance="unknown", clip_type=Non
             if kps[end]["visibility"] < MIN_KEYPOINT_CONF:
                 continue
             v, dx, dy = _limb_velocity(series, i, j, end, torso)
-            if v > punch_thresh and abs(dx) > abs(dy):
-                candidates.append((v, limb_key, "punch", is_left, (end, mid, root)))
+            horizontal = abs(dx) > abs(dy)
+            vertical_rise = dy < 0 and abs(dy) >= abs(dx)
+            if v > punch_thresh and (horizontal or vertical_rise):
+                # vert_only: admitted solely as an uppercut candidate — must
+                # pass the uppercut gates or be discarded entirely
+                candidates.append((v, limb_key, "punch", is_left, (end, mid, root), not horizontal))
         for limb_key, (end, mid, root), is_left in (
             ("la", LEFT_LEG, True), ("ra", RIGHT_LEG, False),
         ):
@@ -275,13 +295,13 @@ def classify_subject_strikes(frames, subject_id, stance="unknown", clip_type=Non
             knee_v, _, _ = _limb_velocity(series, i, j, mid, torso)
             # a kick lifts the ankle (dy<0 in image coords) and drives the knee
             if v > kick_thresh and dy < 0 and knee_v > 0.4 * v:
-                candidates.append((v, limb_key, "kick", is_left, (end, mid, root)))
+                candidates.append((v, limb_key, "kick", is_left, (end, mid, root), False))
 
         if not candidates:
             i += 1
             continue
 
-        v, limb_key, kind, is_left, (end, mid, root) = max(candidates)
+        v, limb_key, kind, is_left, (end, mid, root), vert_only = max(candidates)
         if t - last_by_limb.get(limb_key, -1e9) < SAME_LIMB_COOLDOWN_SECONDS or \
            t - last_any < SUBJECT_COOLDOWN_SECONDS:
             i += 1
@@ -334,17 +354,39 @@ def classify_subject_strikes(frames, subject_id, stance="unknown", clip_type=Non
         if kind == "punch":
             elbow = peak_kps[mid]
             wrist = peak_kps[end]
-            # Lateral compactness at peak. Measured alternatives on the golden
-            # corpus (tighter 0.30; AND extension < 0.85) traded hook recall
-            # for straight precision at no net gain — kept as-is.
-            hook_shape = (
-                elbow["visibility"] > MIN_KEYPOINT_CONF
-                and abs(wrist["x"] - elbow["x"]) < 0.35 * torso
+            shoulder = peak_kps[root]
+
+            # Uppercut check first: vertical-dominant at the peak + all gates.
+            jp2 = _window_start(series, peak_i)
+            dx_pk = dy_pk = 0.0
+            if jp2 is not None:
+                _, dx_pk, dy_pk = _limb_velocity(series, peak_i, jp2, end, torso)
+            uppercut_shape = (
+                dy_pk < 0 and abs(dy_pk) >= abs(dx_pk)
+                and shoulder["visibility"] > MIN_KEYPOINT_CONF
+                and abs(wrist["x"] - shoulder["x"]) < UPPERCUT_MAX_LATERAL_OFFSET * torso
+                and UPPERCUT_MIN_EXTENSION < _dist(shoulder, wrist) / torso < UPPERCUT_MAX_EXTENSION
+                and wrist["y"] - shoulder["y"] < UPPERCUT_WRIST_MAX_BELOW_SHOULDER * torso
             )
-            if hook_shape:
-                strike_type = "lead_hook" if (is_left == lead_is_left) else "rear_hook"
+            if uppercut_shape:
+                strike_type = "lead_uppercut" if (is_left == lead_is_left) else "rear_uppercut"
+            elif vert_only:
+                # admitted only for vertical motion and failed the uppercut
+                # gates — a guard reset or face wipe, not a strike
+                i += 1
+                continue
             else:
-                strike_type = "jab" if (is_left == lead_is_left) else "cross"
+                # Lateral compactness at peak. Measured alternatives on the golden
+                # corpus (tighter 0.30; AND extension < 0.85) traded hook recall
+                # for straight precision at no net gain — kept as-is.
+                hook_shape = (
+                    elbow["visibility"] > MIN_KEYPOINT_CONF
+                    and abs(wrist["x"] - elbow["x"]) < 0.35 * torso
+                )
+                if hook_shape:
+                    strike_type = "lead_hook" if (is_left == lead_is_left) else "rear_hook"
+                else:
+                    strike_type = "jab" if (is_left == lead_is_left) else "cross"
         else:
             hip_rot = _hip_rotation(series, _window_start(series, peak_i) or peak_i, peak_i)
             is_rear_leg = (is_left != lead_is_left)
