@@ -34,7 +34,8 @@ import math
 # inverted jab/cross + lead/rear kick naming for fighters facing right.
 # rules-4: punch stride veto (wrist-to-body velocity ratio), persistence
 # confidence floor 0.4 -> 0.6.
-RULES_VERSION = "rules-4"
+# rules-5: hooks named by axis (lead_hook/rear_hook) from striking side + stance.
+RULES_VERSION = "rules-5"
 
 MIN_KEYPOINT_CONF = 0.3
 SMOOTHING_ALPHA = 0.5            # EMA over keypoint positions before kinematics
@@ -341,7 +342,7 @@ def classify_subject_strikes(frames, subject_id, stance="unknown", clip_type=Non
                 and abs(wrist["x"] - elbow["x"]) < 0.35 * torso
             )
             if hook_shape:
-                strike_type = "hook"
+                strike_type = "lead_hook" if (is_left == lead_is_left) else "rear_hook"
             else:
                 strike_type = "jab" if (is_left == lead_is_left) else "cross"
         else:
@@ -383,8 +384,8 @@ def classify_subject_strikes(frames, subject_id, stance="unknown", clip_type=Non
         kp_conf = _mean_conf(series, j, peak_i, joints)
         pattern_score = 1.0 if pattern_complete else 0.3
         confidence = 0.35 * velocity_margin + 0.35 * kp_conf + 0.30 * pattern_score
-        if not stance_known and kind == "punch" and strike_type in ("jab", "cross"):
-            confidence -= 0.1
+        if not stance_known and kind == "punch":
+            confidence -= 0.1  # jab/cross and lead/rear hook axis all depend on stance
         confidence = round(max(0.0, min(1.0, confidence)), 3)
 
         strike = {
@@ -407,6 +408,7 @@ def classify_subject_strikes(frames, subject_id, stance="unknown", clip_type=Non
                 "peak_extension": round(peak_ext, 3) if peak_ext is not None else None,
                 "torso_length": round(torso, 4),
                 "stance_known": stance_known,
+                "side_left": is_left,
             },
         }
         strikes.append(strike)
@@ -438,4 +440,12 @@ def classify_clip(frames, subject_stances, clip_type=None):
                 target["strikes"].append(strike)
 
     all_strikes.sort(key=lambda s: s["timestamp_seconds"])
+
+    # Trajectory features (schema v1) — additive annotation, stored with every
+    # detection so future labels become training rows retroactively. Imported
+    # here (not module top) to keep strike_features' import of this module
+    # cycle-free.
+    from services.strike_features import annotate_clip_features
+    annotate_clip_features(frames, all_strikes, subject_stances)
+
     return all_strikes

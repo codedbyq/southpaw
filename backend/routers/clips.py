@@ -169,6 +169,7 @@ async def select_subject(
             peak_velocity=s.get("peak_velocity"),
             recovery_seconds=s.get("recovery_seconds"),
             hip_rotation=s.get("hip_rotation"),
+            features=s.get("features"),
         )
         db.add(row)
         new_rows.append(row)
@@ -266,10 +267,13 @@ VALID_STRIKE_LABELS = {"correct", "wrong_type", "not_a_strike", "missed"}
 # backwards compatibility with the classifier's current naming — golden_eval
 # normalizes it to rear_kick when scoring.
 VALID_STRIKE_TYPES = {
-    "jab", "cross", "hook", "uppercut",
+    "jab", "cross",
+    "lead_hook", "rear_hook", "hook",          # hook = axis unjudgeable
+    "lead_uppercut", "rear_uppercut", "uppercut",  # uppercut = axis unjudgeable
     "lead_kick", "rear_kick", "kick",  # axis = which of the fighter's legs (stance-relative,
                                        # unaffected by temporary switches); kick = axis unjudgeable
-    "knee", "elbow",                   # not detectable yet — labels measure the recall gap
+    "lead_knee", "rear_knee", "knee",      # not detectable yet — labels measure the recall
+    "lead_elbow", "rear_elbow", "elbow",   # gap; generics = axis unjudgeable
     "check",                           # defensive action, NOT a strike — excluded from strike
                                        # ground truth at export; recorded for FP analysis and
                                        # the future defense taxonomy

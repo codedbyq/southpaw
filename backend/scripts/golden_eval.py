@@ -49,10 +49,12 @@ def _norm_type(t):
 
 
 def _type_match(pred_type, label_type):
-    """A generic 'kick' label (axis unclear on video, e.g. switch kicks)
-    accepts any kick-family prediction."""
-    if label_type == "kick":
-        return pred_type == "kick" or pred_type.endswith("_kick")
+    """Generic family labels (axis unjudgeable on video) accept any same-family
+    prediction: 'kick' matches lead_kick/rear_kick, 'hook' matches
+    lead_hook/rear_hook, 'uppercut' matches lead/rear uppercut. Specific labels
+    are scored strictly."""
+    if label_type in ("kick", "hook", "uppercut", "knee", "elbow"):
+        return pred_type == label_type or pred_type.endswith("_" + label_type)
     return pred_type == label_type
 
 
