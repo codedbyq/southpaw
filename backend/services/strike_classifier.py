@@ -32,7 +32,9 @@ import math
 # combined with the YOLO model name into clips.pipeline_version.
 # rules-3: facing-aware stance detection (clip_metrics.detect_stance) — fixes
 # inverted jab/cross + lead/rear kick naming for fighters facing right.
-RULES_VERSION = "rules-3"
+# rules-4: punch stride veto (wrist-to-body velocity ratio), persistence
+# confidence floor 0.4 -> 0.6.
+RULES_VERSION = "rules-4"
 
 MIN_KEYPOINT_CONF = 0.3
 SMOOTHING_ALPHA = 0.5            # EMA over keypoint positions before kinematics
@@ -54,11 +56,18 @@ KICK_MIN_PEAK_VELOCITY = 4.0       # true-kick median 8.1; footwork FP median 4.
 KICK_CHAMBER_MAX_BELOW_HIP = 0.8   # knee height vs hip in torso-lengths; FP median 0.79
 KICK_SUPPORT_FOOT_MAX_V = 2.5      # both feet fast = skip/switch-step, not a kick
 
+# Punch false-positive gate: a real punch moves the wrist much faster than the
+# body; an arm swinging along with a stride doesn't (corpus: true-punch
+# wrist-to-body ratio median 6.7, phantom median 4.0).
+PUNCH_MIN_WRIST_TO_BODY_RATIO = 2.0
+
 RETRACTION_WINDOW_SECONDS = 0.6  # extension must fall after its peak within this
 RETRACTION_DROP_RATIO = 0.10     # ...by at least 10% of peak extension
 EXTENSION_PEAK_SEARCH_SECONDS = 0.3
 
-MIN_PERSISTED_CONFIDENCE = 0.4   # below this: JSON-only, flagged low_confidence
+MIN_PERSISTED_CONFIDENCE = 0.6   # below this: JSON-only, flagged low_confidence
+                                 # (0.4 -> 0.6 measured on the golden corpus: kills ~4 FPs
+                                 # per sacrificed TP)
 MIN_PRESENCE_SECONDS = 2.0       # don't classify subjects barely on screen
 
 # limb keypoint indices: (end_effector, mid_joint, root_joint)
@@ -304,6 +313,17 @@ def classify_subject_strikes(frames, subject_id, stance="unknown", clip_type=Non
                     or v_other > KICK_SUPPORT_FOOT_MAX_V:
                 i += 1
                 continue
+        else:
+            jp = _window_start(series, peak_i)
+            if jp is not None:
+                dtp = peak["t"] - series[jp]["t"]
+                if dtp > 0:
+                    cur_h = _mid(peak_kps[11], peak_kps[12])
+                    past_h = _mid(series[jp]["kps"][11], series[jp]["kps"][12])
+                    v_body = _dist(cur_h, past_h) / torso / dtp
+                    if peak_v < PUNCH_MIN_WRIST_TO_BODY_RATIO * v_body:
+                        i += 1
+                        continue
 
         # Retraction / extension pattern
         curve = _extension_curve(series, peak_i, root, end, torso)
@@ -313,6 +333,9 @@ def classify_subject_strikes(frames, subject_id, stance="unknown", clip_type=Non
         if kind == "punch":
             elbow = peak_kps[mid]
             wrist = peak_kps[end]
+            # Lateral compactness at peak. Measured alternatives on the golden
+            # corpus (tighter 0.30; AND extension < 0.85) traded hook recall
+            # for straight precision at no net gain — kept as-is.
             hook_shape = (
                 elbow["visibility"] > MIN_KEYPOINT_CONF
                 and abs(wrist["x"] - elbow["x"]) < 0.35 * torso
