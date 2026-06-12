@@ -398,6 +398,7 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
                     peak_velocity=strike.get("peak_velocity"),
                     recovery_seconds=strike.get("recovery_seconds"),
                     hip_rotation=strike.get("hip_rotation"),
+                    features=strike.get("features"),
                 )
                 db.add(row)
                 strike_rows.append(row)

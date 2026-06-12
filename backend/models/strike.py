@@ -1,6 +1,6 @@
 import uuid
 from sqlalchemy import String, Float, Integer, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from db.base import Base
 
@@ -19,5 +19,6 @@ class Strike(Base):
     peak_velocity: Mapped[float | None] = mapped_column(Float, nullable=True)
     recovery_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     hip_rotation: Mapped[float | None] = mapped_column(Float, nullable=True)  # shoulder-hip angle delta during strike
+    features: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # trajectory schema v1 (services/strike_features.py)
 
     job: Mapped["Job"] = relationship("Job", back_populates="strikes")
