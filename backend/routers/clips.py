@@ -57,10 +57,14 @@ class ClipResponse(BaseModel):
         from_attributes = True
 
 
+VALID_CLIP_TYPES = {"bag", "sparring", "shadow", "pads", "strength"}
+
+
 class ClipUpdateRequest(BaseModel):
     filename: str | None = None
     notes: str | None = None
     session_id: str | None = None  # uuid string to move to session, empty string to unorganize
+    clip_type: str | None = None   # corrects the type inherited from the session at upload
 
 # --- Routes ---
 
@@ -542,6 +546,10 @@ async def update_clip(
         clip.filename = body.filename.strip()
     if body.notes is not None:
         clip.notes = body.notes.strip() or None
+    if body.clip_type is not None:
+        if body.clip_type not in VALID_CLIP_TYPES:
+            raise HTTPException(status_code=422, detail=f"clip_type must be one of {sorted(VALID_CLIP_TYPES)}")
+        clip.clip_type = body.clip_type
 
     if body.session_id is not None:
         old_session_id = clip.session_id

@@ -210,7 +210,23 @@ export default function LabelPlayerPage() {
           ← Label queue
         </button>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="font-display text-xl font-black tracking-tight text-text">{clip.filename}</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="font-display text-xl font-black tracking-tight text-text">{clip.filename}</h1>
+            <select
+              value={clip.clip_type || ''}
+              onChange={async e => {
+                const clip_type = e.target.value
+                setClip(prev => ({ ...prev, clip_type }))
+                try { await api.patch(`/clips/${clipId}`, { clip_type }) }
+                catch (err) { console.error('Failed to update clip type', err) }
+              }}
+              className="rounded-lg border border-line bg-surface2 px-2 py-1 text-xs text-text3"
+              title="Clip type — affects classifier thresholds (shadow) and eval context; fix it if the session default was wrong"
+            >
+              <option value="" disabled>type?</option>
+              {['bag', 'sparring', 'shadow', 'pads', 'strength'].map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
           <div className="flex items-center gap-3">
             {missedArm && <span className="animate-pulse text-xs font-bold uppercase tracking-wide text-warning">press a type key to mark missed strike — esc cancels</span>}
             <span className={`font-display text-base font-extrabold tabular-nums ${done ? 'text-kiwi' : 'text-text'}`}>
