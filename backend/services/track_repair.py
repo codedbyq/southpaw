@@ -19,7 +19,7 @@ Versioned: bump REPAIR_VERSION on any behavioral change.
 
 from services.strike_classifier import MIN_KEYPOINT_CONF, _dist, _mid
 
-REPAIR_VERSION = "stitch-1"
+REPAIR_VERSION = "repair-2"  # stitch-1 + appearance adjudication + drift splits
 
 STITCH_MAX_GAP_S = 2.0        # bridge id gaps up to this long
 STITCH_OVERLAP_TOL_S = 0.3    # tracker handoffs briefly double-track one person
@@ -109,9 +109,16 @@ def _prop_dist(a, b):
     return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
 
 
-def plan_stitches(frames):
+def plan_stitches(frames, appearance=None, strict=False):
     """Returns (id_map, report). id_map maps every raw id to its canonical id
-    (identity for unmerged tracklets)."""
+    (identity for unmerged tracklets).
+
+    appearance: optional services.appearance.AppearanceIndex. Geometric merge
+    candidates are rejected when the two tracklets' boundary-segment
+    embeddings differ beyond STITCH_MAX_DISTANCE (measured failure without
+    this: the stitcher re-merged a fighter onto the pad holder across a
+    crossover). strict=True additionally rejects candidates appearance cannot
+    verify (no crops on one side) — the production setting."""
     tk = _tracklets(frames)
     pairs = []
     for a, A in tk.items():
@@ -135,6 +142,15 @@ def plan_stitches(frames):
             pd = _prop_dist(A["props"], B["props"])
             if pd is not None and pd > PROPORTION_VETO:
                 continue
+            if appearance is not None:
+                from services.appearance import distance, STITCH_MAX_DISTANCE, BUCKET_SECONDS
+                tail = appearance.centroid(a, A["t1"] - 2 * BUCKET_SECONDS, A["t1"] + 0.5)
+                head = appearance.centroid(b, B["t0"] - 0.5, B["t0"] + 2 * BUCKET_SECONDS)
+                ad = distance(tail, head)
+                if ad is not None and ad > STITCH_MAX_DISTANCE:
+                    continue
+                if ad is None and strict:
+                    continue
             score = err / allowance + (pd if pd is not None else 0.15)
             pairs.append((score, a, b))
 
@@ -194,16 +210,68 @@ def plan_stitches(frames):
     return id_map, report
 
 
-def apply_repair(frames):
-    """Plan and apply stitching in place. Returns the report; frames'
-    skeleton ids (and embedded strikes' subject_ids) are rewritten to
-    canonical ids."""
-    id_map, report = plan_stitches(frames)
+def _apply_id_map(frames, id_map):
+    for f in frames:
+        for sk in f.get("skeletons", []):
+            sk["id"] = id_map.get(sk["id"], sk["id"])
+        for s in f.get("strikes", []) or []:
+            if s.get("subject_id") is not None:
+                s["subject_id"] = id_map.get(s["subject_id"], s["subject_id"])
+
+
+def apply_splits(frames, splits):
+    """Cut tracks at appearance changepoints: a track with splits at
+    [t1, t2, ...] becomes segments [start,t1), [t1,t2), ... — the first keeps
+    the original id, later segments get fresh ids. Returns
+    ({(orig_id, segment_index): new_id}, resolver) where resolver(sid, t)
+    maps an original id at time t to its post-split id."""
+    if not splits:
+        return {}, lambda sid, t: sid
+    next_id = max((sk["id"] for f in frames for sk in f.get("skeletons", [])), default=0) + 1
+    sorted_splits = {sid: sorted(ts) for sid, ts in splits.items() if ts}
+    assigned = {}
+
+    def resolve(sid, t):
+        nonlocal next_id
+        ts = sorted_splits.get(sid)
+        if not ts:
+            return sid
+        seg = sum(1 for x in ts if t >= x)
+        if seg == 0:
+            return sid
+        key = (sid, seg)
+        if key not in assigned:
+            assigned[key] = next_id
+            next_id += 1
+        return assigned[key]
+
+    for f in frames:
+        t = f.get("timestamp", 0.0)
+        for sk in f.get("skeletons", []):
+            sk["id"] = resolve(sk["id"], t)
+        for s in f.get("strikes", []) or []:
+            if s.get("subject_id") is not None:
+                s["subject_id"] = resolve(s["subject_id"], t)
+    return assigned, resolve
+
+
+def apply_repair(frames, appearance=None, strict=False):
+    """Plan and apply repair in place: drift splits first (when appearance is
+    available), then adjudicated stitching. Returns the report."""
+    split_report = {}
+    if appearance is not None:
+        from services.appearance import find_drift_splits
+        splits = find_drift_splits(appearance)
+        if splits:
+            assigned, resolve = apply_splits(frames, splits)
+            split_report = {f"{old}#seg{seg}": new for (old, seg), new in assigned.items()}
+            # the index must follow the split, or the stitcher sees the new
+            # tail as unverifiable and may re-merge the split we just made
+            appearance = appearance.remap(resolve)
+
+    id_map, report = plan_stitches(frames, appearance=appearance, strict=strict)
     if report["merges"]:
-        for f in frames:
-            for sk in f.get("skeletons", []):
-                sk["id"] = id_map.get(sk["id"], sk["id"])
-            for s in f.get("strikes", []) or []:
-                if s.get("subject_id") is not None:
-                    s["subject_id"] = id_map.get(s["subject_id"], s["subject_id"])
+        _apply_id_map(frames, id_map)
+    report["splits"] = split_report
+    report["version"] = REPAIR_VERSION
     return report
