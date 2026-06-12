@@ -438,4 +438,12 @@ def classify_clip(frames, subject_stances, clip_type=None):
                 target["strikes"].append(strike)
 
     all_strikes.sort(key=lambda s: s["timestamp_seconds"])
+
+    # Trajectory features (schema v1) — additive annotation, stored with every
+    # detection so future labels become training rows retroactively. Imported
+    # here (not module top) to keep strike_features' import of this module
+    # cycle-free.
+    from services.strike_features import annotate_clip_features
+    annotate_clip_features(frames, all_strikes, subject_stances)
+
     return all_strikes

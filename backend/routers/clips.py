@@ -169,6 +169,7 @@ async def select_subject(
             peak_velocity=s.get("peak_velocity"),
             recovery_seconds=s.get("recovery_seconds"),
             hip_rotation=s.get("hip_rotation"),
+            features=s.get("features"),
         )
         db.add(row)
         new_rows.append(row)
