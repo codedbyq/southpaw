@@ -53,7 +53,7 @@ def _type_match(pred_type, label_type):
     prediction: 'kick' matches lead_kick/rear_kick, 'hook' matches
     lead_hook/rear_hook, 'uppercut' matches lead/rear uppercut. Specific labels
     are scored strictly."""
-    if label_type in ("kick", "hook", "uppercut"):
+    if label_type in ("kick", "hook", "uppercut", "knee", "elbow"):
         return pred_type == label_type or pred_type.endswith("_" + label_type)
     return pred_type == label_type
 

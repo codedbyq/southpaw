@@ -272,7 +272,8 @@ VALID_STRIKE_TYPES = {
     "lead_uppercut", "rear_uppercut", "uppercut",  # uppercut = axis unjudgeable
     "lead_kick", "rear_kick", "kick",  # axis = which of the fighter's legs (stance-relative,
                                        # unaffected by temporary switches); kick = axis unjudgeable
-    "knee", "elbow",                   # not detectable yet — labels measure the recall gap
+    "lead_knee", "rear_knee", "knee",      # not detectable yet — labels measure the recall
+    "lead_elbow", "rear_elbow", "elbow",   # gap; generics = axis unjudgeable
     "check",                           # defensive action, NOT a strike — excluded from strike
                                        # ground truth at export; recorded for FP analysis and
                                        # the future defense taxonomy

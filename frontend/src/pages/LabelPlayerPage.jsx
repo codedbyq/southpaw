@@ -20,13 +20,17 @@ const TAXONOMIES = {
       { key: '6', type: 'rear_kick' },
       { key: '7', type: 'lead_uppercut' },
       { key: '8', type: 'rear_uppercut' },
-      { key: '9', type: 'knee' },
-      { key: '0', type: 'elbow' },
-      // generics = axis unjudgeable (e.g. unknown-stance footage, mid-switch);
-      // axis = the fighter's limb, not the slot it fired from
+      { key: '9', type: 'lead_knee' },
+      { key: '0', type: 'rear_knee' },
+      { key: 'e', type: 'lead_elbow' },
+      { key: 'r', type: 'rear_elbow' },
+      // generics = axis unjudgeable (e.g. unknown-stance public footage,
+      // mid-switch); axis = the fighter's limb, not the slot it fired from
       { key: 'g', type: 'kick' },
       { key: 'h', type: 'hook' },
       { key: 'u', type: 'uppercut' },
+      { key: 'o', type: 'knee' },
+      { key: 'p', type: 'elbow' },
       { key: 'c', type: 'check' },    // defense, not a strike — kept out of strike truth at
                                       // export; distinguishes check-FPs from footwork-FPs
     ],
