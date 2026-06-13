@@ -28,6 +28,8 @@ image = (
         "pydantic-settings",
         "openai",
         "supervision<0.30",     # ByteTrack multi-person tracking (sv.ByteTrack removed in 0.30)
+        "torchreid",            # OSNet-AIN person ReID for the athlete gallery
+        "tensorboard",          # torchreid import dependency
     ])
     .add_local_python_source("models")
     .add_local_python_source("db")
@@ -61,6 +63,11 @@ MAX_EFFECTIVE_FPS = 45    # above this (60fps phones), process every 2nd frame
 
 STALE_HEARTBEAT_MINUTES = 10   # reaper: processing job with no heartbeat
 STALE_QUEUED_MINUTES = 15      # reaper: spawned but never started
+
+# Gallery overrides the primary-subject heuristic only when its margin-based
+# confidence clears this (validation: correct picks scored 0.3-1.0; tight
+# cross-modality cases ~0.3 keep the heuristic + chips for manual correction).
+GALLERY_OVERRIDE_MIN_CONF = 0.4
 
 
 class PipelineError(Exception):
@@ -374,6 +381,51 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
                     strike_counts[strike["subject_id"]] = strike_counts.get(strike["subject_id"], 0) + 1
             primary_subject, subject_confidence, _ = score_subjects(frames_data, strike_counts)
 
+            # Athlete gallery (ReID): for a returning consented athlete with a
+            # gallery, rank the meaningful subjects against it and override the
+            # heuristic pick when the gallery is confident. Only the athlete's
+            # embedding is ever persisted (D2); opponents' are transient here.
+            # Must run BEFORE strike persistence so the right subject's strikes
+            # are written.
+            athlete_embeddings = {}
+            user_row = None
+            try:
+                user_row = db.execute(
+                    select(User).where(User.clerk_user_id == clip.clerk_user_id)
+                ).scalar_one_or_none()
+                if user_row is not None and getattr(user_row, "biometric_consent_at", None):
+                    from models.identity_sample import IdentitySample
+                    from services.gallery import build_gallery, rank_subjects, _stats_to_vec
+                    from services.reid_embedder import embed_subjects
+
+                    meaningful_ids = [
+                        s["id"] for s in subject_summaries(frames_data)
+                        if s["frames"] >= 0.3 * max(len(frames_data), 1)
+                    ]
+                    gallery_samples = db.execute(
+                        select(IdentitySample).where(
+                            IdentitySample.user_id == user_row.id,
+                            IdentitySample.revoked_at.is_(None),
+                            IdentitySample.embedding.isnot(None),
+                        )
+                    ).scalars().all()
+                    gallery = build_gallery(gallery_samples)
+
+                    if gallery is not None and len(meaningful_ids) > 1:
+                        athlete_embeddings = embed_subjects(tmp_path, frames_data, meaningful_ids, s3_client=s3)
+                        subjects = {
+                            sid: {"embedding": emb,
+                                  "skeletal": _stats_to_vec(skeletal_stats(frames_data, sid))}
+                            for sid, emb in athlete_embeddings.items()
+                        }
+                        ranked, gconf = rank_subjects(gallery, subjects)
+                        if ranked and gconf >= GALLERY_OVERRIDE_MIN_CONF:
+                            primary_subject = ranked[0][0]
+                            subject_confidence = gconf
+                            logger.info(f"Gallery override: subject {primary_subject} (conf {gconf})")
+            except Exception as gal_err:
+                logger.warning(f"Gallery matching failed (non-fatal, heuristic kept): {gal_err}")
+
             # recovery_seconds = gap to *this subject's* next strike (not the
             # opponent's). Compute per-subject in place — JSON shares these dicts.
             by_subject = {}
@@ -452,35 +504,43 @@ def run_inference(clip_id: str, job_id: str, s3_key: str, tier: str = "free"):
                 strike_rows.append(row)
             db.commit()
 
-            # Solo clip (shadow/bag/drills) = free high-confidence identity
-            # sample for ReID later. Gated on biometric consent (BIPA et al.) —
-            # no consent, no identity data.
+            # Capture the athlete's identity sample (consent-gated, D2/D3:
+            # athlete only). Persist the OSNet embedding so this clip enriches
+            # the gallery — solo clips seed it, gallery-confirmed picks grow it.
+            #   source: 'solo'   single meaningful subject (unambiguous)
+            #           'auto'   gallery-picked the athlete among several
+            # A heuristic pick among several with no gallery is NOT persisted —
+            # it's a guess; it becomes a sample only on user confirmation
+            # (manual select-subject) or when a gallery confirms it.
             try:
-                user_row = db.execute(
-                    select(User).where(User.clerk_user_id == clip.clerk_user_id)
-                ).scalar_one_or_none()
-                meaningful = [
-                    s for s in subject_summaries(frames_data)
-                    if s["frames"] >= 0.3 * max(len(frames_data), 1)
-                ]
-                if (
-                    user_row is not None
-                    and getattr(user_row, "biometric_consent_at", None)
-                    and len(meaningful) == 1
-                    and meaningful[0]["id"] == primary_subject
-                ):
+                if user_row is not None and getattr(user_row, "biometric_consent_at", None):
                     from models.identity_sample import IdentitySample
-                    db.execute(delete(IdentitySample).where(IdentitySample.clip_id == clip.id))
-                    db.add(IdentitySample(
-                        user_id=user_row.id,
-                        clip_id=clip.id,
-                        subject_id=primary_subject,
-                        pipeline_version=pipeline_version,
-                        source="solo",
-                        skeletal_stats=skeletal_stats(frames_data, primary_subject),
-                        confidence=subject_confidence,
-                    ))
-                    db.commit()
+                    from services.reid_embedder import embed_subjects, EMBEDDING_MODEL
+
+                    meaningful = [
+                        s for s in subject_summaries(frames_data)
+                        if s["frames"] >= 0.3 * max(len(frames_data), 1)
+                    ]
+                    is_solo = len(meaningful) == 1 and meaningful[0]["id"] == primary_subject
+                    gallery_picked = subject_confidence >= GALLERY_OVERRIDE_MIN_CONF and athlete_embeddings
+                    if is_solo or gallery_picked:
+                        emb = athlete_embeddings.get(primary_subject)
+                        if emb is None:
+                            emb = embed_subjects(tmp_path, frames_data, [primary_subject],
+                                                 s3_client=s3).get(primary_subject)
+                        db.execute(delete(IdentitySample).where(IdentitySample.clip_id == clip.id))
+                        db.add(IdentitySample(
+                            user_id=user_row.id,
+                            clip_id=clip.id,
+                            subject_id=primary_subject,
+                            pipeline_version=pipeline_version,
+                            source="solo" if is_solo else "auto",
+                            skeletal_stats=skeletal_stats(frames_data, primary_subject),
+                            embedding=emb,
+                            embedding_model=EMBEDDING_MODEL if emb else None,
+                            confidence=subject_confidence,
+                        ))
+                        db.commit()
             except Exception as id_err:
                 logger.warning(f"Identity sample capture failed (non-fatal): {id_err}")
                 db.rollback()
@@ -723,6 +783,90 @@ def extract_coach_thumbnail(profile_id: str, intro_video_s3_key: str):
             os.remove(tmp_path)
 
 # --- Stuck-job reaper ---
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_name("southpaw-secrets")],
+    gpu="T4",
+    memory=2048,
+    timeout=300,
+    retries=1,
+)
+def embed_subject(clip_id: str, subject_id: int):
+    """Re-embed ONE subject of a clip and attach the OSNet vector to that
+    clip's identity sample. Spawned from the manual select-subject endpoint
+    so a user's correction enriches their gallery (ReID block, Layer B
+    Option 1).
+
+    Privacy (D2/D3): this only ever embeds the subject the user claimed as
+    themselves — never bystanders/opponents — and only with consent on file.
+    Nothing is decoded or persisted for any other person.
+    """
+    import json as _json
+
+    import boto3
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import sessionmaker
+
+    from models.clip import Clip
+    from models.job import Job
+    from models.user import User
+    from models.identity_sample import IdentitySample
+    from services.reid_embedder import embed_subjects, EMBEDDING_MODEL
+
+    s3 = boto3.client(
+        "s3",
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        region_name=os.environ["AWS_REGION"],
+    )
+    engine = create_engine(
+        os.environ["DATABASE_URL"].replace("+asyncpg", ""),
+        pool_pre_ping=True, connect_args={"sslmode": "require"},
+    )
+    Session = sessionmaker(bind=engine)
+    tmp_path = None
+
+    with Session() as db:
+        clip = db.execute(select(Clip).where(Clip.id == clip_id)).scalar_one_or_none()
+        if clip is None:
+            return
+        user = db.execute(select(User).where(User.clerk_user_id == clip.clerk_user_id)).scalar_one_or_none()
+        # Defensive re-check: never embed without consent on file.
+        if user is None or getattr(user, "biometric_consent_at", None) is None:
+            return
+        sample = db.execute(
+            select(IdentitySample).where(IdentitySample.clip_id == clip.id)
+        ).scalar_one_or_none()
+        if sample is None or sample.subject_id != subject_id:
+            return  # selection changed again before this ran — let the latest win
+        job = db.execute(
+            select(Job).where(Job.clip_id == clip.id, Job.status == "complete")
+        ).scalar_one_or_none()
+        if job is None or not job.result_s3_key:
+            return
+
+        try:
+            frames = _json.loads(
+                s3.get_object(Bucket=os.environ["S3_BUCKET_NAME"], Key=job.result_s3_key)["Body"].read()
+            )["frames"]
+            suffix = os.path.splitext(clip.s3_key)[-1] or ".mp4"
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            s3.download_fileobj(os.environ["S3_BUCKET_NAME"], clip.s3_key, tmp)
+            tmp.close()
+            tmp_path = tmp.name
+
+            emb = embed_subjects(tmp_path, frames, [subject_id], s3_client=s3).get(subject_id)
+            if emb is not None:
+                sample.embedding = emb
+                sample.embedding_model = EMBEDDING_MODEL
+                db.commit()
+        except Exception as e:
+            logger.warning(f"embed_subject failed (non-fatal): {e}")
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
 
 reaper_image = (
     modal.Image.debian_slim(python_version="3.11")

@@ -38,7 +38,7 @@ export default function ProfilePage() {
   async function handleConsentToggle() {
     const granting = !user?.biometric_consent_at
     if (!granting && !window.confirm(
-      'Revoking deletes the identity data we\'ve stored for you (body proportions used to recognize you in your clips). You\'ll pick your fighter manually from now on. Continue?'
+      'Revoking permanently deletes the identity data we\'ve stored for you (a numeric fingerprint of your body proportions and appearance used to recognize you across your clips). You\'ll pick your fighter manually from now on. Continue?'
     )) return
     setConsentBusy(true)
     try {
@@ -100,9 +100,10 @@ export default function ProfilePage() {
             <div>
               <p className="text-sm font-medium text-text">Recognize me in my own clips</p>
               <p className="mt-0.5 max-w-md text-xs leading-relaxed text-muted">
-                Stores your body proportions so we can automatically pick you out when other
-                people are in frame. Never stored for anyone else in your videos; deleted
-                immediately if you turn this off.
+                Stores a numeric fingerprint of your body proportions and appearance so we can
+                automatically pick you out when other people are in frame. Computed only for you —
+                never for anyone else in your videos — never shared, and permanently deleted the
+                moment you turn this off.
               </p>
             </div>
             <Button
