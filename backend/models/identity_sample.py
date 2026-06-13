@@ -25,6 +25,8 @@ class IdentitySample(Base):
     pipeline_version: Mapped[str | None] = mapped_column(String, nullable=True)
     source: Mapped[str] = mapped_column(String, nullable=False)  # solo | manual | auto
     skeletal_stats: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    embedding: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # normalized OSNet centroid (athlete only)
+    embedding_model: Mapped[str | None] = mapped_column(String, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # bad-label recovery
     created_at: Mapped[datetime] = mapped_column(
