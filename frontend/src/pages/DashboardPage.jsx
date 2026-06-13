@@ -9,8 +9,10 @@ import SessionCard from '../components/SessionCard'
 import StatsBar from '../components/StatsBar'
 import CoachReviewPanel from '../components/CoachReviewPanel'
 import { StatsBarSkeleton, SessionCardSkeleton } from '../components/Skeleton'
+import ConsentPrompt from '../components/ConsentPrompt'
 
 const RECENT_LIMIT = 4
+const CONSENT_PROMPT_KEY = 'biometricConsentPrompted'
 
 export default function DashboardPage() {
   const api = useApi()
@@ -28,6 +30,7 @@ export default function DashboardPage() {
   const [trendFeedback, setTrendFeedback] = useState(null)
   const [trendLoading, setTrendLoading] = useState(false)
   const [trendError, setTrendError] = useState(null)
+  const [showConsent, setShowConsent] = useState(false)
 
   async function loadData() {
     try {
@@ -39,6 +42,17 @@ export default function DashboardPage() {
       setSessions(sessionsData)
       setStats(statsData)
       setCurrentUser(userData)
+
+      // One-time biometric opt-in for users who haven't decided yet. Undecided
+      // = consent not on file AND never prompted (localStorage). Onboarded
+      // users only — don't interrupt the onboarding flow.
+      if (
+        userData.user_type &&
+        !userData.biometric_consent_at &&
+        !localStorage.getItem(CONSENT_PROMPT_KEY)
+      ) {
+        setShowConsent(true)
+      }
 
       if (userData.user_type === 'coach') {
         try {
@@ -94,8 +108,15 @@ export default function DashboardPage() {
   const greeting = clerkUser?.firstName ? `Good ${partOfDay}, ${clerkUser.firstName}` : `Good ${partOfDay}`
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
 
+  function dismissConsent() {
+    localStorage.setItem(CONSENT_PROMPT_KEY, '1')
+    setShowConsent(false)
+    loadData()
+  }
+
   return (
     <AppLayout active="dashboard">
+      {showConsent && <ConsentPrompt onDecided={dismissConsent} />}
       <div className="flex">
         <div className="min-w-0 flex-1">
           <div className="mx-auto max-w-5xl px-4 py-8 md:px-8">
