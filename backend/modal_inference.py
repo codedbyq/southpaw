@@ -784,6 +784,90 @@ def extract_coach_thumbnail(profile_id: str, intro_video_s3_key: str):
 
 # --- Stuck-job reaper ---
 
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_name("southpaw-secrets")],
+    gpu="T4",
+    memory=2048,
+    timeout=300,
+    retries=1,
+)
+def embed_subject(clip_id: str, subject_id: int):
+    """Re-embed ONE subject of a clip and attach the OSNet vector to that
+    clip's identity sample. Spawned from the manual select-subject endpoint
+    so a user's correction enriches their gallery (ReID block, Layer B
+    Option 1).
+
+    Privacy (D2/D3): this only ever embeds the subject the user claimed as
+    themselves — never bystanders/opponents — and only with consent on file.
+    Nothing is decoded or persisted for any other person.
+    """
+    import json as _json
+
+    import boto3
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import sessionmaker
+
+    from models.clip import Clip
+    from models.job import Job
+    from models.user import User
+    from models.identity_sample import IdentitySample
+    from services.reid_embedder import embed_subjects, EMBEDDING_MODEL
+
+    s3 = boto3.client(
+        "s3",
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        region_name=os.environ["AWS_REGION"],
+    )
+    engine = create_engine(
+        os.environ["DATABASE_URL"].replace("+asyncpg", ""),
+        pool_pre_ping=True, connect_args={"sslmode": "require"},
+    )
+    Session = sessionmaker(bind=engine)
+    tmp_path = None
+
+    with Session() as db:
+        clip = db.execute(select(Clip).where(Clip.id == clip_id)).scalar_one_or_none()
+        if clip is None:
+            return
+        user = db.execute(select(User).where(User.clerk_user_id == clip.clerk_user_id)).scalar_one_or_none()
+        # Defensive re-check: never embed without consent on file.
+        if user is None or getattr(user, "biometric_consent_at", None) is None:
+            return
+        sample = db.execute(
+            select(IdentitySample).where(IdentitySample.clip_id == clip.id)
+        ).scalar_one_or_none()
+        if sample is None or sample.subject_id != subject_id:
+            return  # selection changed again before this ran — let the latest win
+        job = db.execute(
+            select(Job).where(Job.clip_id == clip.id, Job.status == "complete")
+        ).scalar_one_or_none()
+        if job is None or not job.result_s3_key:
+            return
+
+        try:
+            frames = _json.loads(
+                s3.get_object(Bucket=os.environ["S3_BUCKET_NAME"], Key=job.result_s3_key)["Body"].read()
+            )["frames"]
+            suffix = os.path.splitext(clip.s3_key)[-1] or ".mp4"
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            s3.download_fileobj(os.environ["S3_BUCKET_NAME"], clip.s3_key, tmp)
+            tmp.close()
+            tmp_path = tmp.name
+
+            emb = embed_subjects(tmp_path, frames, [subject_id], s3_client=s3).get(subject_id)
+            if emb is not None:
+                sample.embedding = emb
+                sample.embedding_model = EMBEDDING_MODEL
+                db.commit()
+        except Exception as e:
+            logger.warning(f"embed_subject failed (non-fatal): {e}")
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+
 reaper_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(["sqlalchemy", "psycopg2-binary", "redis"])

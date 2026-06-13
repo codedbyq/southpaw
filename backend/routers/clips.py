@@ -202,6 +202,20 @@ async def select_subject(
         ))
         await db.flush()
 
+        # Re-embed just this subject on the GPU to enrich the gallery (ReID
+        # Layer B Option 1). Only the subject the user claimed as themselves is
+        # ever embedded — no third-party biometrics are computed or stored
+        # (D2). Fire-and-forget; the skeletal sample above is already saved.
+        try:
+            import modal
+            embed_fn = modal.Function.from_name(
+                "southpaw-inference", "embed_subject",
+                environment_name=settings.MODAL_ENVIRONMENT or None,
+            )
+            await embed_fn.spawn.aio(clip_id=str(clip.id), subject_id=int(subject_id))
+        except Exception:
+            pass  # gallery enrichment is best-effort; selection already applied
+
     # Regenerate clip feedback for the new subject
     try:
         summary = build_clip_summary(clip, new_rows, user=user)
